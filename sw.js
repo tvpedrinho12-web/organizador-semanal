@@ -1,5 +1,5 @@
 /* sw.js — cache offline + ação de notificação "Concluir" + recebimento de push */
-const CACHE = 'organizador-v5';
+const CACHE = 'organizador-v6';
 const ASSETS = [
   './',
   './index.html',

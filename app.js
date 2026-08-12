@@ -29,7 +29,7 @@
       streak: { history: [], breaksLogged: {} },
       settings: { dailyReminder: '08:00', defaultReminder: 10, streakGoal: 30, eveningNudge: '20:30' },
       aiUsage: { month: monthKey(), count: 0 },
-      ui: { suggestDismissed: {} },
+      ui: { suggestDismissed: {}, reviewedDate: null, routineMineDismissed: {} },
     };
   }
 
@@ -370,7 +370,7 @@
       row.innerHTML = `
         <div class="timed-time">${it.time}</div>
         <div class="timed-card">
-          <div class="timed-text">${esc(it.text)}${it.routineId ? '<span class="routine-badge">rotina</span>' : ''}</div>
+          <div class="timed-text">${it.priority === 'alta' ? '<span class="prio-dot" title="prioridade alta"></span>' : ''}${esc(it.text)}${it.routineId ? '<span class="routine-badge">rotina</span>' : ''}</div>
           <button class="check ${it.done ? 'on' : ''}" aria-label="Concluir">${CHECK_SVG}</button>
         </div>`;
       row.querySelector('.check').onclick = (e) => { e.stopPropagation(); toggleItem(viewDate, period, it.id); };
@@ -390,7 +390,7 @@
       row.className = 'todo-row' + (it.done ? ' done' : '');
       row.innerHTML = `
         <button class="check sm ${it.done ? 'on' : ''}" aria-label="Concluir">${CHECK_SVG}</button>
-        <div class="todo-text">${esc(it.text)}${it.routineId ? '<span class="routine-badge">rotina</span>' : ''}</div>`;
+        <div class="todo-text">${it.priority === 'alta' ? '<span class="prio-dot" title="prioridade alta"></span>' : ''}${esc(it.text)}${it.routineId ? '<span class="routine-badge">rotina</span>' : ''}</div>`;
       row.querySelector('.check').onclick = (e) => { e.stopPropagation(); toggleItem(viewDate, period, it.id); };
       row.querySelector('.todo-text').onclick = (e) => openItemMenu(e, it, period);
       wrap.appendChild(row);
@@ -473,6 +473,27 @@
         }
       }
     }
+    // 3.5) orçamento de tempo: tarefas demais para as horas que sobram hoje
+    const budget = timeBudgetToday();
+    if (budget && !isSuggestDismissed('budget')) {
+      return {
+        key: 'budget', tag: 'REPLANEJAR',
+        text: `Você ainda tem ${budget.pending} ${budget.pending === 1 ? 'tarefa' : 'tarefas'} e só ${budget.hoursTxt} ${budget.hoursTxt === '1' ? 'hora livre' : 'horas livres'} hoje. Quer mover uma para amanhã?`,
+        primary: { label: 'Mover uma', fn: () => { moveOnePendingToTomorrow(); dismissSuggestion('budget'); } },
+        ghosts: [{ label: 'Deixa assim', fn: () => dismissSuggestion('budget') }],
+      };
+    }
+    // 3.6) memória de rotina: padrão que se repete e ainda não virou rotina fixa
+    const pat = detectRoutinePattern();
+    if (pat) {
+      const key = 'routinemine-' + pat.textKey;
+      return {
+        key, tag: 'MEMÓRIA', persist: pat.textKey,
+        text: `Você costuma "${pat.text}" ${pat.daysLabel}. Quer transformar em rotina fixa?`,
+        primary: { label: 'Criar rotina', fn: () => { createRoutineFromPattern(pat); } },
+        ghosts: [{ label: 'Agora não', fn: () => dismissRoutineMine(pat.textKey) }],
+      };
+    }
     // 4) domingo: revisar semana
     if (wd === 0 && !isSuggestDismissed('sunday')) {
       return {
@@ -526,6 +547,114 @@
         return;
       }
     }
+  }
+
+  // ---------- Replanejamento: orçamento de tempo (feature 2) ----------
+  const DAY_END_MIN = 22 * 60; // consideramos o dia "produtivo" até as 22h
+  function timeBudgetToday() {
+    const now = nowMinutes();
+    if (now < 12 * 60) return null;          // não incomoda de manhã
+    const hoursLeft = (DAY_END_MIN - now) / 60;
+    if (hoursLeft <= 0) return null;
+    const t = todayISO();
+    const pending = allItems(t).filter((it) => !it.done).length;
+    if (pending < 3) return null;
+    if (pending <= hoursLeft) return null;   // tem folga, tudo bem
+    return { pending, hoursTxt: String(Math.max(1, Math.round(hoursLeft))) };
+  }
+  function relocateToTomorrow(iso, periodKey, index) {
+    const arr = dayData(iso)[periodKey];
+    const it = arr.splice(index, 1)[0];
+    dayData(addDays(iso, 1))[periodKey].push({ id: uid(), text: it.text, time: it.time || null, reminder: (it.reminder != null ? it.reminder : null), done: false, priority: it.priority || null });
+    save(); render(); scheduleNotifications();
+    toast('Movida para amanhã');
+  }
+  function moveOnePendingToTomorrow() {
+    const t = todayISO();
+    // 1) preferir uma pendente SEM horário (menos comprometida)
+    for (const p of PERIODS) {
+      const arr = dayData(t)[p.key];
+      for (let i = arr.length - 1; i >= 0; i--) if (!arr[i].done && !arr[i].time) return relocateToTomorrow(t, p.key, i);
+    }
+    // 2) senão, a de horário mais tarde
+    let best = null;
+    PERIODS.forEach((p) => (dayData(t)[p.key] || []).forEach((it, i) => {
+      if (!it.done && it.time) { const m = timeToMin(it.time); if (!best || m > best.m) best = { key: p.key, i, m }; }
+    }));
+    if (best) relocateToTomorrow(t, best.key, best.i);
+  }
+
+  // ---------- Memória de rotina: detecção de padrões (feature 3) ----------
+  function normKey(s) { return String(s || '').trim().toLowerCase().replace(/\s+/g, ' '); }
+  function pluralDow(wd) { return DOW_FULL[wd] + 's'; }
+  function mostCommon(arr) {
+    if (!arr.length) return null;
+    const c = {}; let best = arr[0], bestN = 0;
+    arr.forEach((v) => { const k = String(v); c[k] = (c[k] || 0) + 1; if (c[k] > bestN) { bestN = c[k]; best = v; } });
+    return best;
+  }
+  function detectRoutinePattern() {
+    const t = todayISO();
+    const floor = addDays(t, -70);
+    // agrupa ocorrências manuais por texto normalizado
+    const groups = {}; // key -> { text, byDow: {wd: {weeks:Set, times:[], periods:[]}} }
+    Object.keys(state.days).forEach((iso) => {
+      if (iso >= t || iso < floor) return;
+      const wd = fromISO(iso).getDay();
+      const wk = weekKey(iso);
+      PERIODS.forEach((p) => (state.days[iso][p.key] || []).forEach((it) => {
+        if (it.routineId) return;                 // já é rotina
+        const key = normKey(it.text);
+        if (!key) return;
+        const g = groups[key] || (groups[key] = { text: it.text, byDow: {} });
+        g.text = it.text;                          // texto representativo (mais recente pela ordem de iso)
+        const slot = g.byDow[wd] || (g.byDow[wd] = { weeks: new Set(), times: [], periods: [] });
+        slot.weeks.add(wk);
+        if (it.time) slot.times.push(it.time);
+        slot.periods.push(p.key);
+      }));
+    });
+    // escolhe o melhor candidato: texto com dias que se repetem em >=3 semanas e ainda não é rotina
+    let bestCand = null, bestScore = 0;
+    Object.keys(groups).forEach((key) => {
+      if (state.ui.routineMineDismissed && state.ui.routineMineDismissed[key]) return;
+      const g = groups[key];
+      const weekdays = [], allTimes = [], allPeriods = [];
+      let score = 0;
+      Object.keys(g.byDow).forEach((wdStr) => {
+        const wd = Number(wdStr);
+        const slot = g.byDow[wd];
+        if (slot.weeks.size < 3) return;                                   // precisa se repetir em >=3 semanas
+        if (routineCoversDow(key, wd)) return;                             // já existe rotina nesse dia
+        weekdays.push(wd); allTimes.push(...slot.times); allPeriods.push(...slot.periods);
+        score += slot.weeks.size;
+      });
+      if (weekdays.length && score > bestScore) {
+        bestScore = score;
+        weekdays.sort((a, b) => a - b);
+        const time = mostCommon(allTimes) || null;
+        const period = mostCommon(allPeriods) || 'morning';
+        const daysLabel = weekdays.length === 1 ? `toda ${DOW_FULL[weekdays[0]]}` : `nas ${weekdays.map(pluralDow).join(' e ')}`;
+        bestCand = { textKey: key, text: g.text, weekdays, daysLabel, time, period };
+      }
+    });
+    return bestCand;
+  }
+  function routineCoversDow(textKey, wd) {
+    return state.routines.some((r) => normKey(r.text) === textKey && Array.isArray(r.days) && r.days.includes(wd));
+  }
+  function createRoutineFromPattern(pat) {
+    state.routines.push({ id: uid(), text: pat.text, period: pat.period, time: pat.time, reminder: null, days: pat.weekdays });
+    if (!state.ui.routineMineDismissed) state.ui.routineMineDismissed = {};
+    state.ui.routineMineDismissed[pat.textKey] = true;
+    seedHorizon();
+    save(); render(); renderRoutines(); scheduleNotifications();
+    toast('Rotina criada');
+  }
+  function dismissRoutineMine(textKey) {
+    if (!state.ui.routineMineDismissed) state.ui.routineMineDismissed = {};
+    state.ui.routineMineDismissed[textKey] = true;
+    save(); renderSuggestion();
   }
 
   // pendências de um dia
@@ -1168,6 +1297,230 @@
     toast('Dia reorganizado');
   }
 
+  // ---------- Modo foco (feature 4) ----------
+  function focusQueue() {
+    const items = itemsWithPeriod(todayISO()).filter((x) => !x.it.done);
+    const timed = items.filter((x) => x.it.time).sort((a, b) => timeToMin(a.it.time) - timeToMin(b.it.time));
+    const untimed = items.filter((x) => !x.it.time);
+    return [...timed, ...untimed];
+  }
+  function openFocus() {
+    viewDate = todayISO();
+    show('#focusScreen');
+    renderFocus();
+  }
+  function closeFocus() { hide('#focusScreen'); render(); }
+  function renderFocus() {
+    const body = $('#focusBody'), foot = $('#focusFoot');
+    const q = focusQueue();
+    const s = dayStats(todayISO());
+    if (!q.length) {
+      $('#focusLabel').textContent = 'HOJE';
+      body.innerHTML = `
+        <div class="focus-done-emoji">✓</div>
+        <div class="focus-task">${s.total ? 'Tudo feito por hoje' : 'Nada para hoje'}</div>
+        <div class="focus-count">${s.total ? s.done + ' de ' + s.total + ' concluídas' : 'Adicione tarefas na tela Hoje'}</div>`;
+      foot.innerHTML = '';
+      const out = document.createElement('button'); out.className = 'focus-secondary'; out.textContent = 'Sair do foco'; out.onclick = closeFocus;
+      foot.appendChild(out);
+      return;
+    }
+    $('#focusLabel').textContent = 'AGORA';
+    const cur = q[0], nxt = q[1];
+    const prio = cur.it.priority === 'alta' ? '<div class="focus-prio alta">prioridade alta</div>' : '';
+    body.innerHTML = `
+      <div class="focus-time ${cur.it.time ? '' : 'none'}">${cur.it.time || 'sem horário'}</div>
+      <div class="focus-task">${esc(cur.it.text)}</div>
+      ${prio}
+      ${nxt ? `<div class="focus-next">depois: <b>${esc(nxt.it.text)}</b>${nxt.it.time ? ' · ' + nxt.it.time : ''}</div>` : '<div class="focus-next">é a última de hoje</div>'}
+      <div class="focus-count">${s.done} de ${s.total} concluídas hoje</div>`;
+    foot.innerHTML = '';
+    const done = document.createElement('button');
+    done.className = 'focus-primary';
+    done.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg> Concluir';
+    done.onclick = () => focusComplete(cur);
+    const later = document.createElement('button');
+    later.className = 'focus-secondary';
+    later.textContent = cur.it.time ? 'Adiar 30 min' : 'Mover para amanhã';
+    later.onclick = () => focusAdiar(cur);
+    foot.appendChild(done); foot.appendChild(later);
+  }
+  function focusComplete(cur) {
+    const t = todayISO();
+    const found = findItem(t, cur.it.id);
+    if (found) { found.it.done = true; save(); }
+    renderFocus(); renderHoje();
+    if (isDayComplete(t)) maybeCelebrate(t);
+  }
+  function focusAdiar(cur) {
+    const t = todayISO();
+    const found = findItem(t, cur.it.id);
+    if (!found) { renderFocus(); return; }
+    if (found.it.time) {
+      let m = timeToMin(found.it.time) + 30;
+      if (m > 23 * 60 + 30) m = 23 * 60 + 30;
+      found.it.time = pad(Math.floor(m / 60)) + ':' + pad(m % 60);
+      save(); scheduleNotifications();
+      toast('Adiada para ' + found.it.time);
+    } else {
+      removeItemById(t, cur.it.id);
+      dayData(addDays(t, 1))[found.period].push({ id: uid(), text: found.it.text, time: null, reminder: (found.it.reminder != null ? found.it.reminder : null), done: false, priority: found.it.priority || null });
+      save(); scheduleNotifications();
+      toast('Movida para amanhã');
+    }
+    renderFocus(); renderHoje();
+  }
+
+  // ---------- Revisão do dia (feature 5) ----------
+  function maybeShowReview() {
+    const t = todayISO();
+    if (state.ui.reviewedDate === t) return;
+    if (dayStatus(t) !== 'incomplete') return;                 // só se sobrou algo pendente hoje
+    const nudge = state.settings.eveningNudge || '20:30';
+    if (nowMinutes() < timeToMin(nudge)) return;               // só à noite
+    if (!$('#focusScreen').classList.contains('hidden')) return;
+    if ($$('.modal-overlay').some((m) => !m.classList.contains('hidden'))) return;
+    openReview();
+  }
+  function openReview() {
+    state.ui.reviewedDate = todayISO();                        // mostra no máx. uma vez por noite
+    save();
+    renderReview();
+    show('#reviewModal');
+  }
+  function renderReview() {
+    const t = todayISO();
+    const s = dayStats(t);
+    const pend = pendingFrom(t);
+    const left = pend.length;
+    $('#reviewSummary').innerHTML = left
+      ? `Hoje você concluiu <b>${s.done} de ${s.total}</b>. ${left} ${left === 1 ? 'ficou pendente' : 'ficaram pendentes'}. O que fazer com ${left === 1 ? 'ela' : 'elas'}?`
+      : `Tudo resolvido. ${s.done} de ${s.total} ${s.done === 1 ? 'concluída' : 'concluídas'} hoje.`;
+    const list = $('#reviewList');
+    list.innerHTML = '';
+    pend.forEach(({ it }) => {
+      const row = document.createElement('div');
+      row.className = 'review-row';
+      row.innerHTML = `
+        <div class="review-task">${it.time ? `<span class="rv-time">${it.time}</span>` : ''}${esc(it.text)}</div>
+        <div class="review-actions">
+          <button data-a="tom">Amanhã</button>
+          <button data-a="other">Outro dia</button>
+          <button class="rv-del" data-a="del">Excluir</button>
+        </div>
+        <div class="review-date hidden"><input type="date" min="${addDays(t, 2)}" value="${addDays(t, 2)}" /></div>`;
+      row.querySelector('[data-a="tom"]').onclick = () => reviewResolve(() => reviewMove(it.id, addDays(t, 1)));
+      row.querySelector('[data-a="del"]').onclick = () => reviewResolve(() => removeItemById(t, it.id));
+      const otherBtn = row.querySelector('[data-a="other"]');
+      const dateWrap = row.querySelector('.review-date');
+      const dateInput = dateWrap.querySelector('input');
+      otherBtn.onclick = () => { dateWrap.classList.toggle('hidden'); otherBtn.classList.toggle('on'); };
+      dateInput.onchange = () => { const dst = dateInput.value; if (/^\d{4}-\d{2}-\d{2}$/.test(dst) && dst > t) reviewResolve(() => reviewMove(it.id, dst)); };
+      list.appendChild(row);
+    });
+  }
+  function reviewMove(id, destIso) {
+    const t = todayISO();
+    const found = findItem(t, id);
+    if (!found) return;
+    removeItemById(t, id);
+    dayData(destIso)[found.period].push({ id: uid(), text: found.it.text, time: found.it.time || null, reminder: (found.it.reminder != null ? found.it.reminder : null), done: false, priority: found.it.priority || null });
+  }
+  function reviewResolve(action) {
+    action();
+    save(); scheduleNotifications();
+    renderReview(); render();
+  }
+  function reviewAllTomorrow() {
+    const t = todayISO();
+    const pend = pendingFrom(t);
+    pend.forEach(({ it }) => reviewMove(it.id, addDays(t, 1)));
+    save(); scheduleNotifications();
+    closeReview(); render();
+    if (pend.length) toast(pend.length + (pend.length === 1 ? ' tarefa movida' : ' tarefas movidas'));
+  }
+  function closeReview() {
+    state.ui.reviewedDate = todayISO();
+    save(); hide('#reviewModal');
+  }
+
+  // ---------- Planejar meu dia (feature 1, IA com aprovação) ----------
+  let planProposal = null;
+  function openPlanModal() {
+    $('#planStep1').classList.remove('hidden');
+    $('#planStep2').classList.add('hidden');
+    $('#planText').value = '';
+    $('#planHint').textContent = ''; $('#planHint').classList.remove('err');
+    $('#planBuild').disabled = false; $('#planBuild').textContent = 'Montar plano';
+    show('#planModal');
+    setTimeout(() => $('#planText').focus(), 60);
+  }
+  async function buildPlan() {
+    const text = $('#planText').value.trim();
+    const hint = $('#planHint'); hint.classList.remove('err');
+    if (!text) { $('#planText').focus(); return; }
+    const btn = $('#planBuild'); btn.disabled = true; btn.textContent = 'Montando…'; hint.textContent = 'Organizando seu dia…';
+    const date = viewDate;
+    const now = date === todayISO() ? pad(new Date().getHours()) + ':' + pad(new Date().getMinutes()) : null;
+    try {
+      bumpAiUsage();
+      const res = await fetch(apiBase() + '/api/plan-day', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, date, now }),
+      });
+      let data = null; try { data = await res.json(); } catch {}
+      if (!data) { hint.classList.add('err'); hint.textContent = 'IA indisponível aqui (precisa do backend).'; return; }
+      if (!data.ok) { hint.classList.add('err'); hint.textContent = data.message || 'Não consegui montar agora.'; return; }
+      const tasks = (data.tasks || []).filter((t) => t && t.task);
+      if (!tasks.length) { hint.classList.add('err'); hint.textContent = 'Não identifiquei tarefas nesse texto.'; return; }
+      planProposal = { date, tasks };
+      renderPlanProposal();
+    } catch (e) {
+      hint.classList.add('err'); hint.textContent = 'Sem conexão com a IA. Tente de novo.';
+    } finally {
+      btn.disabled = false; btn.textContent = 'Montar plano';
+    }
+  }
+  function periodRank(p) { return p === 'morning' ? 0 : p === 'afternoon' ? 1 : 2; }
+  function sortPlan(a, b) {
+    const am = a.time ? timeToMin(a.time) : periodRank(a.period) * 1000 + 900;
+    const bm = b.time ? timeToMin(b.time) : periodRank(b.period) * 1000 + 900;
+    return am - bm;
+  }
+  function renderPlanProposal() {
+    const { tasks, date } = planProposal;
+    $('#planIntro').textContent = `${tasks.length} ${tasks.length === 1 ? 'tarefa' : 'tarefas'} para ${date === todayISO() ? 'hoje' : fmtLong(date)}. Nada é criado até você aprovar.`;
+    const list = $('#planList'); list.innerHTML = '';
+    const perLabel = (k) => (PERIODS.find((p) => p.key === k) || {}).label || '';
+    tasks.slice().sort(sortPlan).forEach((t) => {
+      const row = document.createElement('div'); row.className = 'organize-row';
+      const meta = t.time ? t.time : perLabel(t.period);
+      const prio = (t.priority === 'alta' || t.priority === 'media') ? `<span class="or-prio ${t.priority}">${t.priority === 'alta' ? 'prioridade alta' : 'média'}</span>` : '';
+      row.innerHTML = `<div class="or-task">${esc(t.task)}</div><div class="or-change">${esc(meta)}${prio ? ' · ' + prio : ''}</div>`;
+      list.appendChild(row);
+    });
+    $('#planStep1').classList.add('hidden');
+    $('#planStep2').classList.remove('hidden');
+  }
+  function planApply() {
+    if (!planProposal) { hide('#planModal'); return; }
+    const { date, tasks } = planProposal;
+    const created = [];
+    tasks.forEach((t) => {
+      const period = PERIODS.some((p) => p.key === t.period) ? t.period : 'morning';
+      const id = uid(); created.push({ date, id });
+      dayData(date)[period].push({ id, text: t.task, time: t.time || null, reminder: null, done: false, priority: (t.priority === 'alta' || t.priority === 'media') ? t.priority : null });
+    });
+    planProposal = null;
+    if (date !== viewDate) viewDate = date;
+    save(); hide('#planModal'); render(); scheduleNotifications();
+    showUndo(`${created.length} ${created.length === 1 ? 'tarefa criada' : 'tarefas criadas'}`, () => {
+      created.forEach((x) => removeItemById(x.date, x.id));
+      save(); render(); scheduleNotifications();
+      toast('Desfeito');
+    });
+  }
+
   // ---------- Voz (Web Speech API) ----------
   let recog = null, recognizing = false;
   function initVoice() {
@@ -1215,6 +1568,22 @@
     $('#aiText').addEventListener('focus', () => $('#aiBar').classList.add('focused'));
     $('#aiText').addEventListener('blur', () => $('#aiBar').classList.remove('focused'));
     $('#organizeDay').onclick = organizeDay;
+
+    // modo foco (feature 4)
+    $('#focusBtn').onclick = openFocus;
+    $('#focusClose').onclick = closeFocus;
+
+    // planejar meu dia (feature 1)
+    $('#planDayBtn').onclick = openPlanModal;
+    $('#planCancel').onclick = () => hide('#planModal');
+    $('#planBuild').onclick = buildPlan;
+    $('#planText').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) buildPlan(); });
+    $('#planBack').onclick = () => { $('#planStep2').classList.add('hidden'); $('#planStep1').classList.remove('hidden'); };
+    $('#planApply').onclick = planApply;
+
+    // revisão do dia (feature 5)
+    $('#reviewClose').onclick = closeReview;
+    $('#reviewAllTomorrow').onclick = reviewAllTomorrow;
 
     // snackbar
     $('#snackbarAction').onclick = () => { if (snackFn) snackFn(); hideUndo(); };
@@ -1296,6 +1665,7 @@
         seedHorizon();
         render();
         checkBreak();
+        maybeShowReview();
         syncPush();
         scheduleNotifications();
       }
@@ -1356,6 +1726,8 @@
     if (!state.aiUsage || typeof state.aiUsage.count !== 'number') state.aiUsage = { month: monthKey(), count: 0 };
     if (!state.ui || typeof state.ui !== 'object') state.ui = { suggestDismissed: {} };
     if (!state.ui.suggestDismissed) state.ui.suggestDismissed = {};
+    if (typeof state.ui.reviewedDate === 'undefined') state.ui.reviewedDate = null;
+    if (!state.ui.routineMineDismissed) state.ui.routineMineDismissed = {};
     state.version = 3;
 
     bindEvents();
@@ -1365,6 +1737,7 @@
     render();
     switchView('hoje');
     checkBreak();
+    maybeShowReview();
     if (typeof Notification !== 'undefined' && Notification.permission === 'granted') { await enablePush(); }
     scheduleNotifications();
   }

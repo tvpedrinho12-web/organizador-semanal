@@ -58,6 +58,22 @@
         <div class="ai-hint" id="aiHint">Ex.: "Amanhã às 14h preciso gravar três vídeos"</div>
       </section>
 
+      <!-- Ações rápidas do dia -->
+      <section class="today-actions" id="todayActions">
+        <button class="chip-btn" id="focusBtn" type="button">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="3.4" fill="currentColor"/></svg>
+          <span>Foco</span>
+        </button>
+        <button class="chip-btn" id="planDayBtn" type="button">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><path d="M4 6.5h11M4 12h16M4 17.5h9" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M18 5.5l1.6 1.6L23 4" stroke="var(--purple-light)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span>Planejar dia</span>
+        </button>
+        <button class="chip-btn" id="organizeDay" type="button">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="9" cy="7" r="2" fill="var(--bg)" stroke="currentColor" stroke-width="1.7"/><circle cx="15" cy="17" r="2" fill="var(--bg)" stroke="currentColor" stroke-width="1.7"/></svg>
+          <span>Organizar</span>
+        </button>
+      </section>
+
       <!-- Sugestão proativa (no máx. 1) -->
       <section id="suggestionSlot"></section>
 
@@ -65,7 +81,6 @@
       <section class="day-section">
         <div class="section-head">
           <h2>Seu dia</h2>
-          <button class="organize-btn" id="organizeDay" type="button">Organizar meu dia</button>
         </div>
         <div class="timed-list" id="timedList"></div>
         <p class="section-empty hidden" id="timedEmpty">Nada com horário marcado.</p>
@@ -402,6 +417,59 @@
         <button class="btn-primary" id="organizeApply" type="button">Aplicar</button>
       </div>
     </div>
+  </div>
+
+  <!-- ================= MODAL: PLANEJAR MEU DIA ================= -->
+  <div class="modal-overlay hidden" id="planModal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="planTitle">
+      <h3 id="planTitle">Planejar meu dia</h3>
+      <!-- passo 1: dump -->
+      <div id="planStep1">
+        <p class="note" style="margin-top:0">Escreva tudo que precisa fazer. A IA monta a ordem, os horários e as prioridades.</p>
+        <label class="field">
+          <textarea id="planText" rows="4" placeholder="Ex: gravar 3 vídeos, treinar, responder o fornecedor e ir ao mercado" autocomplete="off"></textarea>
+        </label>
+        <p class="ai-hint" id="planHint"></p>
+        <div class="modal-actions">
+          <button class="btn-ghost" id="planCancel" type="button">Cancelar</button>
+          <button class="btn-primary" id="planBuild" type="button">Montar plano</button>
+        </div>
+      </div>
+      <!-- passo 2: proposta -->
+      <div id="planStep2" class="hidden">
+        <p class="note" id="planIntro" style="margin-top:0">A IA propôs este plano. Nada é criado até você aprovar.</p>
+        <div class="organize-list" id="planList"></div>
+        <div class="modal-actions">
+          <button class="btn-ghost" id="planBack" type="button">Voltar</button>
+          <button class="btn-primary" id="planApply" type="button">Criar tarefas</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= MODAL: REVISÃO DO DIA ================= -->
+  <div class="modal-overlay hidden" id="reviewModal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="reviewTitle">
+      <h3 id="reviewTitle">Revisão do dia</h3>
+      <p class="note" id="reviewSummary" style="margin-top:0">—</p>
+      <div class="review-list" id="reviewList"></div>
+      <div class="modal-actions">
+        <button class="btn-ghost" id="reviewAllTomorrow" type="button">Mover todas p/ amanhã</button>
+        <button class="btn-primary" id="reviewClose" type="button">Concluir revisão</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= MODO FOCO (tela imersiva) ================= -->
+  <div class="focus-screen hidden" id="focusScreen">
+    <div class="focus-top">
+      <span class="focus-label" id="focusLabel">AGORA</span>
+      <button class="focus-x" id="focusClose" type="button" aria-label="Sair do foco">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="focus-body" id="focusBody"></div>
+    <div class="focus-foot" id="focusFoot"></div>
   </div>
 
   <div class="toast hidden" id="toast"></div>
