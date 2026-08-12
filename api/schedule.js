@@ -103,5 +103,9 @@ export default async function handler(req, res) {
     }
   }
 
-  return res.status(200).json({ ok: true, dailyScheduleId, messageIds, count: messageIds.length, errors });
+  let qstashHost = '(default eu — QSTASH_URL não setada)';
+  try { if (process.env.QSTASH_URL) qstashHost = new URL(process.env.QSTASH_URL).host; }
+  catch { qstashHost = 'INVALIDA: ' + process.env.QSTASH_URL; }
+
+  return res.status(200).json({ ok: true, dailyScheduleId, messageIds, count: messageIds.length, errors, qstashHost });
 }
