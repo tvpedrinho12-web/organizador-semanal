@@ -32,17 +32,25 @@
     return sub;
   }
 
-  let syncTimer = null, lastPlan = null;
+  let syncTimer = null, lastPlan = null, lastSig = null;
+  // assinatura ESTRUTURAL do plano (ignora o texto das frases, que muda a cada sorteio):
+  // só reagenda quando horário/tarefas/cron realmente mudam.
+  function planSignature(plan) {
+    const tasks = (plan.tasks || []).map((t) => t.key + '@' + t.notBeforeUnix).sort().join(',');
+    return (plan.dailyCron || '') + '|' + tasks;
+  }
   function scheduleSync(plan) {
     lastPlan = plan;
     clearTimeout(syncTimer);
     syncTimer = setTimeout(() => { doSync().catch((e) => console.warn('push sync falhou:', e.message)); }, 800);
   }
-  async function syncNow(plan) { lastPlan = plan; return doSync(); }
+  async function syncNow(plan) { lastPlan = plan; return doSync(true); }
 
-  async function doSync() {
+  async function doSync(force) {
     if (!supported() || !lastPlan) return { skipped: true };
     if (Notification.permission !== 'granted') return { skipped: 'perm' };
+    const sig = planSignature(lastPlan);
+    if (!force && global.__pushActive && sig === lastSig) return { skipped: 'nochange' };
 
     let sub;
     try { sub = await getSubscription(); }
@@ -65,6 +73,7 @@
     const data = await res.json();
     setIds({ dailyScheduleId: data.dailyScheduleId, messageIds: (data.messageIds || []).map((m) => m.id) });
     global.__pushActive = true; // servidor assumiu os lembretes -> desliga o fallback local
+    lastSig = sig;
     return data;
   }
 

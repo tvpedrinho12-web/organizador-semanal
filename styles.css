@@ -169,6 +169,48 @@ ul { list-style: none; margin: 0; padding: 0; }
 }
 .add-item:active { background: var(--surface); }
 
+/* quick add inline por período */
+.quick-row { display: flex; gap: 8px; margin-top: 8px; }
+.quick-add {
+  flex: 1; padding: 11px 12px;
+  background: transparent; border: 1px dashed var(--border); border-radius: var(--radius-sm);
+  color: var(--text); font-size: 14px;
+}
+.quick-add::placeholder { color: var(--muted-2); }
+.quick-add:focus { outline: none; border-style: solid; border-color: var(--accent); }
+.add-item-detail {
+  flex: none; width: 44px; border-radius: var(--radius-sm);
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--muted);
+  font-size: 16px; cursor: pointer;
+}
+
+/* tag de rotina no item */
+.routine-tag {
+  display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 999px;
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; vertical-align: middle;
+  background: var(--accent-soft); color: var(--accent);
+}
+
+/* banner com ações (pendências) */
+.banner-actions { display: flex; gap: 8px; flex: none; }
+.banner-actions .btn-ghost, .banner-actions .btn-primary { padding: 8px 12px; font-size: 13px; }
+
+/* lista de rotinas (ajustes) */
+.routine-list { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.routine-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.routine-body { flex: 1; min-width: 0; }
+.routine-text { font-size: 15px; }
+.routine-meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+/* linha de checkbox nos modais */
+.check-row { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.check-row input { width: 18px; height: 18px; flex: none; accent-color: var(--accent); }
+.check-row span { font-size: 13px; color: var(--muted); }
+
 /* ===== Progresso do dia ===== */
 .day-progress { display: flex; align-items: center; gap: 12px; padding: 4px 2px; }
 .day-progress-bar { flex: 1; height: 8px; background: var(--surface-2); border-radius: 999px; overflow: hidden; }

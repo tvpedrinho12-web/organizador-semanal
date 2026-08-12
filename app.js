@@ -19,14 +19,18 @@
 
   function defaultState() {
     return {
-      version: 1,
+      version: 2,
       goals: [],                 // { id, text, type:'bool'|'counter', target }
       goalProgress: {},          // { [weekKey]: { [goalId]: { done, count } } }
-      days: {},                  // { [iso]: { morning:[item], afternoon:[item], night:[item] } }
+      days: {},                  // { [iso]: { morning:[item], afternoon:[item], night:[item], seeded:[routineId] } }
+      routines: [],              // { id, text, period, time, reminder, days:[0..6 getDay] }
       streak: { history: [], breaksLogged: {} }, // history:[{date,len,reason}]
-      settings: { dailyReminder: '08:00', defaultReminder: 10, streakGoal: 30 },
+      settings: { dailyReminder: '08:00', defaultReminder: 10, streakGoal: 30, eveningNudge: '20:30' },
     };
   }
+
+  // dismissais de banner só desta sessão (não persistem)
+  const dismissed = { carry: {}, sunday: false };
 
   // ---------- Helpers de data ----------
   function pad(n) { return String(n).padStart(2, '0'); }
@@ -62,8 +66,48 @@
 
   // ---------- Acesso a dados ----------
   function dayData(iso) {
-    if (!state.days[iso]) state.days[iso] = { morning: [], afternoon: [], night: [] };
+    if (!state.days[iso]) state.days[iso] = { morning: [], afternoon: [], night: [], seeded: [] };
+    if (!Array.isArray(state.days[iso].seeded)) state.days[iso].seeded = [];
     return state.days[iso];
+  }
+
+  // ---------- Rotinas (tarefas recorrentes) ----------
+  // Materializa as rotinas de um dia (só hoje em diante). Respeita exclusões: se o usuário
+  // apagou a instância daquele dia, o routineId fica em `seeded` e não é recriado.
+  function materializeRoutines(iso) {
+    if (!state.routines.length) return false;
+    if (iso < todayISO()) return false; // não reescreve o passado
+    const wd = fromISO(iso).getDay();
+    const d = dayData(iso);
+    let changed = false;
+    state.routines.forEach((r) => {
+      if (!r.days || !r.days.includes(wd)) return;
+      if (d.seeded.includes(r.id)) return;
+      const per = PERIODS.some((p) => p.key === r.period) ? r.period : 'morning';
+      d[per].push({ id: uid(), routineId: r.id, text: r.text, time: r.time || null, reminder: (r.reminder != null ? r.reminder : null), done: false });
+      d.seeded.push(r.id);
+      changed = true;
+    });
+    return changed;
+  }
+  // Remove instâncias futuras (hoje em diante) ainda não concluídas de uma rotina,
+  // e limpa a marca `seeded` — usado ao editar/apagar rotina para re-semear com o novo conteúdo.
+  function clearFutureRoutine(routineId, alsoUnseed) {
+    const t = todayISO();
+    Object.keys(state.days).forEach((iso) => {
+      if (iso < t) return;
+      const d = state.days[iso];
+      PERIODS.forEach((p) => {
+        d[p.key] = (d[p.key] || []).filter((it) => !(it.routineId === routineId && !it.done));
+      });
+      if (alsoUnseed && Array.isArray(d.seeded)) d.seeded = d.seeded.filter((id) => id !== routineId);
+    });
+  }
+  function seedHorizon() {
+    // hoje + próximos 3 dias (garante que os lembretes de push tenham o que agendar)
+    let changed = false;
+    for (let i = 0; i <= 3; i++) { if (materializeRoutines(addDays(todayISO(), i))) changed = true; }
+    return changed;
   }
   function allItems(iso) {
     const d = state.days[iso];
@@ -102,16 +146,22 @@
     total = ((total % 1440) + 1440) % 1440;
     return `${total % 60} ${Math.floor(total / 60)} * * *`;
   }
+  function pickPhrase(cat, fallback) {
+    return (window.Phrases && Phrases.pick(cat)) || fallback;
+  }
+
   function buildReminderPlan() {
     const s = state.settings;
+    seedHorizon(); // garante rotinas materializadas nos dias que vamos agendar
     const plan = { dailyCron: null, dailyNotification: null, tasks: [] };
     if (s.dailyReminder) {
       plan.dailyCron = utcCronFromLocal(s.dailyReminder);
-      plan.dailyNotification = { title: 'Bom dia! ☀️', body: 'Hora de organizar o seu dia.', tag: 'daily' };
+      plan.dailyNotification = { title: 'Hora de organizar', body: pickPhrase('dailyReminder', 'Define suas prioridades antes que o dia te defina.'), tag: 'daily' };
     }
     const now = Date.now();
-    // agenda hoje + amanhã (o QStash guarda; dispara mesmo com o app fechado)
-    [todayISO(), addDays(todayISO(), 1)].forEach((iso) => {
+    // agenda hoje + próximos 3 dias (o QStash guarda; dispara mesmo com o app fechado)
+    for (let i = 0; i <= 3; i++) {
+      const iso = addDays(todayISO(), i);
       allItems(iso).forEach((it) => {
         if (!it.time || it.done) return;
         const [h, m] = it.time.split(':').map(Number);
@@ -124,7 +174,7 @@
             notBeforeUnix: Math.floor(fireAt / 1000),
             notification: {
               title: it.text,
-              body: rem ? `Em ${rem} min (${it.time})` : `Agora (${it.time})`,
+              body: `${it.time} · ${pickPhrase('taskReminder', 'Está no horário. Levanta e faz.')}`,
               tag: 'task-' + it.id,
               data: { itemId: it.id, date: iso },
               actions: [{ action: 'done', title: 'Concluir' }],
@@ -132,7 +182,29 @@
           });
         }
       });
-    });
+    }
+
+    // Nudge de "streak em risco": se HOJE tem tarefas e ainda há pendência, avisa à noite.
+    const nudgeAt = s.eveningNudge || '20:30';
+    const t = todayISO();
+    const st = dayStatus(t);
+    if (st === 'incomplete' && nudgeAt) {
+      const [nh, nm] = nudgeAt.split(':').map(Number);
+      const d = fromISO(t); d.setHours(nh, nm, 0, 0);
+      const fireAt = d.getTime();
+      if (fireAt > now + 15000) {
+        plan.tasks.push({
+          key: t + '|__nudge',
+          notBeforeUnix: Math.floor(fireAt / 1000),
+          notification: {
+            title: 'Sequência em risco',
+            body: pickPhrase('streakRisk', 'O dia está acabando e a lista não. Fecha o que falta.'),
+            tag: 'nudge',
+            data: {},
+          },
+        });
+      }
+    }
     return plan;
   }
   function syncPush() {
@@ -148,55 +220,86 @@
   }
 
   // ---------- Streak ----------
-  function computeStreak() {
-    const t = todayISO();
-    let count = 0;
-    let cursor = t;
-    if (isDayComplete(t)) { count = 1; cursor = addDays(t, -1); }
-    else { cursor = addDays(t, -1); }
-    while (isDayComplete(cursor)) { count++; cursor = addDays(cursor, -1); }
+  // Dias sem NENHUMA tarefa são "descanso": não contam nem quebram a sequência (freeze).
+  // Só um dia com tarefas e alguma pendente ('incomplete') quebra o streak.
+  function dayStatus(iso) {
+    const s = dayStats(iso);
+    if (s.total === 0) return 'empty';
+    return s.done === s.total ? 'complete' : 'incomplete';
+  }
+  function earliestDay() {
+    const keys = Object.keys(state.days);
+    if (!keys.length) return todayISO();
+    return keys.sort()[0];
+  }
+  // conta dias 'complete' terminando em `iso`, pulando dias vazios, parando no primeiro 'incomplete'
+  function streakLenEndingAt(iso) {
+    const floor = earliestDay();
+    let count = 0, cursor = iso;
+    while (cursor >= floor) {
+      const st = dayStatus(cursor);
+      if (st === 'complete') count++;
+      else if (st === 'incomplete') break;
+      // 'empty' => pula (freeze)
+      cursor = addDays(cursor, -1);
+    }
     return count;
   }
+  function computeStreak() {
+    const t = todayISO();
+    // hoje ainda pode ser fechado: se não está completo, olha a partir de ontem
+    let start = dayStatus(t) === 'complete' ? t : addDays(t, -1);
+    return streakLenEndingAt(start);
+  }
   function bestStreak() {
-    // varre todos os dias registrados
-    const dates = Object.keys(state.days).filter((iso) => isDayComplete(iso)).sort();
-    let best = 0, run = 0, prev = null;
-    for (const iso of dates) {
-      if (prev && daysBetween(prev, iso) === 1) run++;
-      else run = 1;
-      best = Math.max(best, run);
-      prev = iso;
+    const floor = earliestDay();
+    let best = 0, run = 0, cursor = todayISO();
+    while (cursor >= floor) {
+      const st = dayStatus(cursor);
+      if (st === 'complete') { run++; best = Math.max(best, run); }
+      else if (st === 'incomplete') { run = 0; }
+      // 'empty' => mantém run (freeze)
+      cursor = addDays(cursor, -1);
     }
     return best;
   }
-  function lastCompleteDate() {
-    const dates = Object.keys(state.days).filter((iso) => isDayComplete(iso)).sort();
-    return dates.length ? dates[dates.length - 1] : null;
-  }
-  function streakLenEndingAt(iso) {
-    let count = 0, cursor = iso;
-    while (isDayComplete(cursor)) { count++; cursor = addDays(cursor, -1); }
-    return count;
+  // Detecta a quebra mais recente: um dia 'incomplete' (teve tarefas, sobrou pendência)
+  // que encerrou uma sequência de dias completos. Ignora dias vazios.
+  function detectBreak() {
+    const floor = earliestDay();
+    let cursor = addDays(todayISO(), -1); // não cobra o dia de hoje (ainda em aberto)
+    while (cursor >= floor) {
+      const st = dayStatus(cursor);
+      if (st === 'incomplete') {
+        const len = streakLenEndingAt(addDays(cursor, -1)); // sequência que existia antes da falha
+        if (len > 0) return { date: cursor, len };
+        return null; // falhou mas não havia sequência a perder
+      }
+      cursor = addDays(cursor, -1);
+    }
+    return null;
   }
   function checkBreak() {
-    const last = lastCompleteDate();
-    if (!last) return;
-    // se o último dia completo foi antes de ontem, a sequência quebrou
-    if (daysBetween(last, todayISO()) >= 2 && !state.streak.breaksLogged[last]) {
-      const len = streakLenEndingAt(last);
-      state.streak.breaksLogged[last] = true;
-      openBreakModal(last, len);
-    }
+    const info = detectBreak();
+    if (!info) return;
+    if (state.streak.breaksLogged[info.date]) return;
+    // registra a quebra IMEDIATAMENTE (não depende do modal) — corrige perda de histórico
+    state.streak.breaksLogged[info.date] = true;
+    state.streak.history.push({ date: info.date, len: info.len, reason: null });
+    save();
+    openBreakModal(info.date, info.len); // modal só adiciona o motivo, se o usuário quiser
   }
 
   // ---------- Render ----------
   function render() {
+    if (materializeRoutines(viewDate)) save(); // preenche rotinas do dia visto (hoje em diante)
     renderHeader();
     renderTabs();
     renderGoals();
     renderChecklist();
     renderDayProgress();
     renderSundayBanner();
+    renderCarryBanner();
   }
 
   function renderHeader() {
@@ -276,10 +379,24 @@
           <span class="block-count">${done}/${items.length}</span>
         </div>
         <div class="item-list"></div>
-        <button class="add-item">+ adicionar em ${per.label.toLowerCase()}</button>`;
+        <div class="quick-row">
+          <input class="quick-add" type="text" placeholder="+ tarefa rápida" autocomplete="off" aria-label="Adicionar tarefa rápida em ${per.label.toLowerCase()}" />
+          <button class="add-item-detail" type="button" aria-label="Adicionar com detalhes">⋯</button>
+        </div>`;
       const listEl = block.querySelector('.item-list');
       items.forEach((it) => listEl.appendChild(renderItem(it, per.key)));
-      block.querySelector('.add-item').onclick = () => openItemModal(null, per.key);
+      const quick = block.querySelector('.quick-add');
+      quick.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        const text = quick.value.trim();
+        if (!text) return;
+        dayData(viewDate)[per.key].push({ id: uid(), text, time: null, reminder: null, done: false });
+        quick.value = '';
+        save(); render(); scheduleNotifications();
+        // re-foca no mesmo campo pra adicionar várias em sequência
+        setTimeout(() => { const q = $$('.block')[PERIODS.indexOf(per)]?.querySelector('.quick-add'); if (q) q.focus(); }, 0);
+      });
+      block.querySelector('.add-item-detail').onclick = () => openItemModal(null, per.key);
       wrap.appendChild(block);
     });
   }
@@ -290,16 +407,18 @@
     const timeHtml = it.time
       ? `<div class="item-time ${isPast(it.time) ? 'past' : ''}">${it.time}${it.reminder ? ' · avisa ' + it.reminder + 'min antes' : ''}</div>`
       : '';
+    const routineTag = it.routineId ? '<span class="routine-tag" title="Rotina fixa">rotina</span>' : '';
     el.innerHTML = `
       <button class="item-check ${it.done ? 'on' : ''}">${it.done ? '✓' : ''}</button>
       <div class="item-body">
-        <div class="item-text">${esc(it.text)}</div>
+        <div class="item-text">${esc(it.text)}${routineTag}</div>
         ${timeHtml}
       </div>
       <button class="row-menu" aria-label="Opções">⋯</button>`;
     el.querySelector('.item-check').onclick = () => toggleItem(viewDate, periodKey, it.id);
     el.querySelector('.row-menu').onclick = (e) => openCtxMenu(e, [
       { label: 'Editar', fn: () => openItemModal(it, periodKey) },
+      { label: 'Duplicar', fn: () => duplicateItem(it, periodKey) },
       { label: 'Apagar', danger: true, fn: () => deleteItem(viewDate, periodKey, it.id) },
     ]);
     return el;
@@ -313,9 +432,47 @@
     $('#dayProgressLabel').textContent = s.total ? s.pct + '%' : '—';
   }
 
+  let sundayPhrase = null;
   function renderSundayBanner() {
     const isSunday = fromISO(todayISO()).getDay() === 0;
-    $('#sundayBanner').classList.toggle('hidden', !(isSunday && currentView === 'hoje'));
+    const showIt = isSunday && currentView === 'hoje';
+    $('#sundayBanner').classList.toggle('hidden', !showIt);
+    if (showIt) {
+      if (!sundayPhrase) sundayPhrase = pickPhrase('weeklySummary', 'Semana encerrada. Olha os números e ajusta.');
+      $('#sundayBannerText').textContent = sundayPhrase;
+    }
+  }
+
+  // pendências (não concluídas) de um dia, com período
+  function pendingFrom(iso) {
+    const d = state.days[iso];
+    if (!d) return [];
+    const out = [];
+    PERIODS.forEach((per) => (d[per.key] || []).forEach((it) => { if (!it.done) out.push({ it, period: per.key }); }));
+    return out;
+  }
+  function renderCarryBanner() {
+    const banner = $('#carryBanner');
+    const t = todayISO();
+    const y = addDays(t, -1);
+    const pend = pendingFrom(y);
+    const showIt = currentView === 'hoje' && viewDate === t && pend.length > 0 && !dismissed.carry[y];
+    banner.classList.toggle('hidden', !showIt);
+    if (showIt) {
+      $('#carryText').textContent = `Você deixou ${pend.length} ${pend.length === 1 ? 'tarefa' : 'tarefas'} pra trás ontem. Traga pra hoje e resolva.`;
+    }
+  }
+  function carryMove() {
+    const t = todayISO();
+    const y = addDays(t, -1);
+    const pend = pendingFrom(y);
+    if (!pend.length) return;
+    pend.forEach(({ it, period }) => {
+      dayData(t)[period].push({ id: uid(), text: it.text, time: it.time || null, reminder: (it.reminder != null ? it.reminder : null), done: false });
+    });
+    dismissed.carry[y] = true;
+    save(); render(); scheduleNotifications();
+    toast(`${pend.length} ${pend.length === 1 ? 'pendência trazida' : 'pendências trazidas'}`);
   }
 
   function isPast(hhmm) {
@@ -340,6 +497,12 @@
     if (i >= 0) arr.splice(i, 1);
     save(); render();
   }
+  function duplicateItem(it, period) {
+    // cópia solta (não herda vínculo de rotina), logo abaixo, não concluída
+    dayData(viewDate)[period].push({ id: uid(), text: it.text, time: it.time || null, reminder: (it.reminder != null ? it.reminder : null), done: false });
+    save(); render(); scheduleNotifications();
+    toast('Tarefa duplicada');
+  }
 
   // ---------- CRUD metas ----------
   function deleteGoal(id) {
@@ -360,7 +523,7 @@
     // lembrete diário
     const [dh, dm] = state.settings.dailyReminder.split(':').map(Number);
     scheduleAt(dh, dm, () => {
-      notify('Bom dia! ☀️', { body: 'Hora de organizar o seu dia.', tag: 'daily' });
+      notify('Hora de organizar', { body: pickPhrase('dailyReminder', 'Define suas prioridades antes que o dia te defina.'), tag: 'daily' });
     });
 
     // por tarefa (somente as de hoje, com horário, não concluídas)
@@ -375,7 +538,7 @@
       if (delay > 0 && delay < 26 * 3600000) {
         timers.push(setTimeout(() => {
           notify(it.text, {
-            body: rem ? `Em ${rem} min (${it.time})` : `Agora (${it.time})`,
+            body: `${it.time} · ${pickPhrase('taskReminder', 'Está no horário. Levanta e faz.')}`,
             tag: 'task-' + it.id,
             data: { itemId: it.id, date: t },
             actions: [{ action: 'done', title: 'Concluir' }],
@@ -403,9 +566,18 @@
     }
   }
 
+  const MILESTONES = [7, 14, 21, 30, 50, 75, 100, 150, 200, 365];
   function maybeCelebrate(iso) {
     if (iso !== todayISO()) return;
-    toast('Dia 100% concluído! 🔥 Sequência: ' + computeStreak());
+    const streak = computeStreak();
+    // marco: meta batida ou número redondo de sequência
+    if (streak > 0 && streak === state.settings.streakGoal) {
+      toast('Meta de ' + streak + ' dias batida. Agora sustenta.');
+    } else if (MILESTONES.includes(streak)) {
+      toast(streak + ' dias seguidos. ' + pickPhrase('dayComplete', 'É assim que se constrói.'));
+    } else {
+      toast(pickPhrase('dayComplete', 'Dia fechado. É assim que se constrói.') + ' (' + streak + ')');
+    }
   }
 
   // ---------- Views ----------
@@ -511,11 +683,45 @@
       : '<li style="border:none;color:var(--muted-2)">Nenhuma quebra registrada.</li>';
   }
 
+  // ---------- Ferramentas de semana ----------
+  // Copia a estrutura de tarefas (sem 'done', sem duplicar rotinas) da semana de srcMon p/ destMon.
+  function copyWeek(srcMon, destMon, skipPast) {
+    const t = todayISO();
+    let copied = 0;
+    for (let i = 0; i < 7; i++) {
+      const srcIso = addDays(srcMon, i);
+      const destIso = addDays(destMon, i);
+      if (skipPast && destIso < t) continue;
+      const src = state.days[srcIso];
+      if (!src) continue;
+      PERIODS.forEach((per) => {
+        (src[per.key] || []).forEach((it) => {
+          if (it.routineId) return; // rotinas se materializam sozinhas — não duplica
+          dayData(destIso)[per.key].push({ id: uid(), text: it.text, time: it.time || null, reminder: (it.reminder != null ? it.reminder : null), done: false });
+          copied++;
+        });
+      });
+    }
+    if (copied) { save(); render(); scheduleNotifications(); }
+    return copied;
+  }
+  function copyPrevWeekIntoCurrent() {
+    const cur = mondayOf(todayISO());
+    const n = copyWeek(addDays(cur, -7), cur, true);
+    $('#weekToolsResult').textContent = n ? `${n} ${n === 1 ? 'tarefa trazida' : 'tarefas trazidas'} da semana passada.` : 'Nada pra trazer (semana passada vazia ou só rotinas).';
+  }
+  function copyCurrentIntoNext() {
+    const cur = mondayOf(todayISO());
+    const n = copyWeek(cur, addDays(cur, 7), false);
+    $('#weekToolsResult').textContent = n ? `${n} ${n === 1 ? 'tarefa copiada' : 'tarefas copiadas'} para a próxima semana.` : 'Nada pra copiar (semana atual sem tarefas manuais).';
+  }
+
   // ---------- Ajustes ----------
   function renderSettings() {
     $('#dailyReminder').value = state.settings.dailyReminder;
     $('#defaultReminder').value = state.settings.defaultReminder;
     $('#streakGoalInput').value = state.settings.streakGoal;
+    renderRoutines();
     updateNotifButton();
     refreshDiag();
   }
@@ -557,7 +763,7 @@
   }
 
   // ---------- Modais ----------
-  let editing = { item: null, period: null, goal: null };
+  let editing = { item: null, period: null, goal: null, routine: null };
 
   function openItemModal(item, periodKey) {
     editing.item = item; editing.period = periodKey;
@@ -568,8 +774,11 @@
     $('#itemReminder').value = item ? (item.reminder != null ? item.reminder : '') : '';
     $('#itemReminder').placeholder = String(state.settings.defaultReminder);
 
-    // duplicar só ao criar
+    // duplicar / repetir só ao criar
     $('#dupWrap').classList.toggle('hidden', !!item);
+    $('#repeatWrap').classList.toggle('hidden', !!item);
+    $('#itemRepeat').checked = false;
+    $('#dupLabel').textContent = 'Duplicar para outros dias';
     const dup = $('#dupDays'); dup.innerHTML = '';
     if (!item) {
       weekDates(viewDate).forEach((iso) => {
@@ -604,6 +813,13 @@
       if (i >= 0) oldArr.splice(i, 1);
       editing.item.text = text; editing.item.time = time; editing.item.reminder = reminder;
       dayData(viewDate)[period].push(editing.item);
+    } else if ($('#itemRepeat').checked) {
+      // vira rotina fixa: dias marcados => dias da semana (getDay)
+      const isos = $$('#dupDays .dup-day').filter((b) => b.dataset.on === '1').map((b) => b.dataset.iso);
+      const days = Array.from(new Set((isos.length ? isos : [viewDate]).map((iso) => fromISO(iso).getDay()))).sort();
+      state.routines.push({ id: uid(), text, period, time, reminder, days });
+      seedHorizon();
+      toast('Rotina criada');
     } else {
       const targets = $$('#dupDays .dup-day').filter((b) => b.dataset.on === '1').map((b) => b.dataset.iso);
       const list = targets.length ? targets : [viewDate];
@@ -638,8 +854,86 @@
     save(); hide('#goalModal'); renderGoals();
   }
 
+  // ---------- Rotinas: modal + lista ----------
+  function buildRoutineDayPicker(selected) {
+    const wrap = $('#routineDays'); wrap.innerHTML = '';
+    const sel = new Set(selected || []);
+    DOW_TAB.forEach((label, i) => {
+      const dow = (i + 1) % 7; // 0=Seg(getDay1) ... 6=Dom(getDay0)
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'dup-day' + (sel.has(dow) ? ' on' : '');
+      b.textContent = label;
+      b.dataset.dow = dow;
+      b.onclick = () => b.classList.toggle('on');
+      wrap.appendChild(b);
+    });
+  }
+  function openRoutineModal(routine) {
+    editing.routine = routine || null;
+    $('#routineModalTitle').textContent = routine ? 'Editar rotina' : 'Nova rotina';
+    $('#routineText').value = routine ? routine.text : '';
+    $('#routinePeriod').value = routine ? routine.period : 'morning';
+    $('#routineTime').value = routine ? (routine.time || '') : '';
+    $('#routineReminder').value = routine ? (routine.reminder != null ? routine.reminder : '') : '';
+    $('#routineReminder').placeholder = String(state.settings.defaultReminder);
+    buildRoutineDayPicker(routine ? routine.days : [fromISO(viewDate).getDay()]);
+    show('#routineModal');
+    setTimeout(() => $('#routineText').focus(), 50);
+  }
+  function saveRoutineFromModal() {
+    const text = $('#routineText').value.trim();
+    if (!text) { toast('Escreva a tarefa'); return; }
+    const period = $('#routinePeriod').value;
+    const time = $('#routineTime').value || null;
+    const remRaw = $('#routineReminder').value;
+    const reminder = remRaw === '' ? null : Math.max(0, parseInt(remRaw, 10) || 0);
+    const days = $$('#routineDays .dup-day').filter((b) => b.classList.contains('on')).map((b) => Number(b.dataset.dow)).sort();
+    if (!days.length) { toast('Escolha ao menos um dia'); return; }
+    if (editing.routine) {
+      const r = editing.routine;
+      clearFutureRoutine(r.id, true); // remove instâncias futuras não concluídas p/ re-semear com o novo conteúdo
+      r.text = text; r.period = period; r.time = time; r.reminder = reminder; r.days = days;
+    } else {
+      state.routines.push({ id: uid(), text, period, time, reminder, days });
+    }
+    seedHorizon();
+    save(); hide('#routineModal'); render(); renderRoutines(); scheduleNotifications();
+    toast(editing.routine ? 'Rotina atualizada' : 'Rotina criada');
+  }
+  function deleteRoutine(id) {
+    clearFutureRoutine(id, true);
+    state.routines = state.routines.filter((r) => r.id !== id);
+    save(); render(); renderRoutines(); scheduleNotifications();
+  }
+  function renderRoutines() {
+    const list = $('#routineList');
+    if (!list) return;
+    list.innerHTML = '';
+    $('#routinesEmpty').classList.toggle('hidden', state.routines.length > 0);
+    const perLabel = (k) => (PERIODS.find((p) => p.key === k) || {}).label || '';
+    state.routines.forEach((r) => {
+      const li = document.createElement('li');
+      li.className = 'routine-item';
+      const daysTxt = r.days.slice().sort().map((dow) => DOW[dow]).join(' ');
+      const meta = [perLabel(r.period), r.time ? r.time : null, daysTxt].filter(Boolean).join(' · ');
+      li.innerHTML = `
+        <div class="routine-body">
+          <div class="routine-text">${esc(r.text)}</div>
+          <div class="routine-meta">${esc(meta)}</div>
+        </div>
+        <button class="row-menu" aria-label="Opções">⋯</button>`;
+      li.querySelector('.row-menu').onclick = (e) => openCtxMenu(e, [
+        { label: 'Editar', fn: () => openRoutineModal(r) },
+        { label: 'Apagar', danger: true, fn: () => deleteRoutine(r.id) },
+      ]);
+      list.appendChild(li);
+    });
+  }
+
   function openBreakModal(date, len) {
-    $('#breakModalText').textContent = `Sua sequência de ${len} ${len === 1 ? 'dia' : 'dias'} foi interrompida. Quer anotar o motivo? (opcional)`;
+    const phrase = (window.Phrases && Phrases.pick('streakBreak')) || 'A sequência caiu. Recomeça hoje.';
+    $('#breakModalText').innerHTML = `<strong>${esc(phrase)}</strong><br><span style="color:var(--muted-2)">Sequência perdida: ${len} ${len === 1 ? 'dia' : 'dias'}. Anota o motivo? (opcional)</span>`;
     $('#breakReason').value = '';
     $('#breakModal').dataset.date = date;
     $('#breakModal').dataset.len = len;
@@ -647,11 +941,11 @@
   }
   function saveBreak(withReason) {
     const m = $('#breakModal');
-    state.streak.history.push({
-      date: m.dataset.date,
-      len: Number(m.dataset.len),
-      reason: withReason ? ($('#breakReason').value.trim() || null) : null,
-    });
+    const date = m.dataset.date;
+    // a entrada já foi criada em checkBreak; aqui só completamos o motivo
+    const entry = (state.streak.history || []).slice().reverse().find((h) => h.date === date);
+    if (entry) { entry.reason = withReason ? ($('#breakReason').value.trim() || null) : null; }
+    else { state.streak.history.push({ date, len: Number(m.dataset.len), reason: withReason ? ($('#breakReason').value.trim() || null) : null }); }
     save(); hide('#breakModal');
   }
 
@@ -708,6 +1002,19 @@
     $('#goalSave').onclick = saveGoalFromModal;
     $('#goalType').onchange = () => $('#goalTargetWrap').classList.toggle('hidden', $('#goalType').value !== 'counter');
     $('#goalText').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveGoalFromModal(); });
+    // checkbox "repetir toda semana" (modal item)
+    $('#itemRepeat').onchange = () => { $('#dupLabel').textContent = $('#itemRepeat').checked ? 'Repetir nesses dias da semana' : 'Duplicar para outros dias'; };
+    // modal rotina
+    $('#addRoutineBtn').onclick = () => openRoutineModal(null);
+    $('#routineCancel').onclick = () => hide('#routineModal');
+    $('#routineSave').onclick = saveRoutineFromModal;
+    $('#routineText').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveRoutineFromModal(); });
+    // banners
+    $('#carryMove').onclick = carryMove;
+    $('#carryDismiss').onclick = () => { dismissed.carry[addDays(todayISO(), -1)] = true; renderCarryBanner(); };
+    // ferramentas de semana
+    $('#copyPrevWeek').onclick = copyPrevWeekIntoCurrent;
+    $('#copyNextWeek').onclick = copyCurrentIntoNext;
     // modal break
     $('#breakSkip').onclick = () => saveBreak(false);
     $('#breakSave').onclick = () => saveBreak(true);
@@ -752,9 +1059,9 @@
     // rollover: revalida ao voltar pro app
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden) {
-        const wasDate = viewDate;
+        if (swReg) swReg.update().catch(() => {}); // força checar SW novo ao reabrir (iOS)
+        seedHorizon();
         render();
-        if (wasDate !== todayISO() && relLabel(wasDate) === '') { /* mantém seleção */ }
         checkBreak();
         syncPush();
         scheduleNotifications();
@@ -791,9 +1098,13 @@
   }
 
   // ---------- Service worker ----------
+  let swReg = null;
   function registerSW() {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js').catch(console.error);
+      // updateViaCache:'none' => o browser sempre revalida o sw.js na rede (evita SW preso em cache no iOS)
+      navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
+        .then((reg) => { swReg = reg; reg.update().catch(() => {}); })
+        .catch(console.error);
       navigator.serviceWorker.addEventListener('message', (ev) => {
         if (ev.data && ev.data.type === 'reload') {
           if (!window.__reloadedBySW) { window.__reloadedBySW = true; location.reload(); }
@@ -823,9 +1134,12 @@
     // migração leve
     state.settings = Object.assign(defaultState().settings, state.settings || {});
     state.streak = Object.assign({ history: [], breaksLogged: {} }, state.streak || {});
+    if (!Array.isArray(state.routines)) state.routines = [];
+    state.version = 2;
 
     bindEvents();
     registerSW();
+    seedHorizon();
     render();
     switchView('hoje');
     checkBreak();

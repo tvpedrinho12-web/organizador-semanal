@@ -42,9 +42,20 @@
       <div id="sundayBanner" class="banner hidden">
         <div>
           <strong>Resumo da semana</strong>
-          <p>É domingo — veja o que você cumpriu.</p>
+          <p id="sundayBannerText">É domingo — veja o que você cumpriu.</p>
         </div>
         <button class="btn-ghost" id="openSummaryFromBanner" type="button">Ver</button>
+      </div>
+
+      <div id="carryBanner" class="banner hidden">
+        <div>
+          <strong id="carryTitle">Pendências de ontem</strong>
+          <p id="carryText">Você deixou tarefas pra trás. Traga pra hoje e resolva.</p>
+        </div>
+        <div class="banner-actions">
+          <button class="btn-ghost" id="carryDismiss" type="button">Ignorar</button>
+          <button class="btn-primary" id="carryMove" type="button">Trazer</button>
+        </div>
       </div>
 
       <!-- Metas da semana -->
@@ -96,6 +107,16 @@
         <div class="streak-stats" id="streakStats"></div>
         <ul class="break-history" id="breakHistory"></ul>
       </section>
+
+      <section class="card">
+        <div class="card-head"><h2>Ferramentas da semana</h2></div>
+        <p class="note" style="margin-top:0">Copie a estrutura das tarefas (sem as marcações de concluído).</p>
+        <div class="diag-actions">
+          <button class="btn-ghost" id="copyPrevWeek" type="button">Trazer semana passada</button>
+          <button class="btn-ghost" id="copyNextWeek" type="button">Copiar p/ próxima</button>
+        </div>
+        <p class="note" id="weekToolsResult"></p>
+      </section>
     </main>
 
     <!-- ================= VIEW: AJUSTES ================= -->
@@ -123,6 +144,16 @@
           <label for="streakGoalInput">Meta de dias seguidos</label>
           <input type="number" id="streakGoalInput" min="1" max="365" value="30" />
         </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>Rotina fixa</h2>
+          <button class="icon-btn" id="addRoutineBtn" type="button" aria-label="Nova rotina">+</button>
+        </div>
+        <p class="note" style="margin-top:0">Tarefas que se repetem toda semana. Aparecem sozinhas nos dias escolhidos.</p>
+        <ul class="routine-list" id="routineList"></ul>
+        <p class="empty-hint" id="routinesEmpty">Nenhuma rotina. Toque em + ou marque "repetir toda semana" ao criar uma tarefa.</p>
       </section>
 
       <section class="card">
@@ -184,9 +215,13 @@
         </label>
       </div>
       <div class="field" id="dupWrap">
-        <span>Duplicar para outros dias</span>
+        <span id="dupLabel">Duplicar para outros dias</span>
         <div class="dup-days" id="dupDays"></div>
       </div>
+      <label class="check-row hidden" id="repeatWrap">
+        <input type="checkbox" id="itemRepeat" />
+        <span>Repetir toda semana nos dias marcados (vira rotina fixa)</span>
+      </label>
       <div class="modal-actions">
         <button class="btn-ghost" id="itemCancel" type="button">Cancelar</button>
         <button class="btn-primary" id="itemSave" type="button">Salvar</button>
@@ -220,6 +255,43 @@
     </div>
   </div>
 
+  <!-- ================= MODAL: ROTINA FIXA ================= -->
+  <div class="modal-overlay hidden" id="routineModal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="routineModalTitle">
+      <h3 id="routineModalTitle">Nova rotina</h3>
+      <label class="field">
+        <span>Tarefa</span>
+        <input type="text" id="routineText" placeholder="Ex: treinar" autocomplete="off" />
+      </label>
+      <label class="field">
+        <span>Período</span>
+        <select id="routinePeriod">
+          <option value="morning">Manhã</option>
+          <option value="afternoon">Tarde</option>
+          <option value="night">Noite</option>
+        </select>
+      </label>
+      <div class="field-row">
+        <label class="field">
+          <span>Horário (opcional)</span>
+          <input type="time" id="routineTime" />
+        </label>
+        <label class="field">
+          <span>Avisar antes (min)</span>
+          <input type="number" id="routineReminder" min="0" max="120" placeholder="10" />
+        </label>
+      </div>
+      <div class="field">
+        <span>Dias da semana</span>
+        <div class="dup-days" id="routineDays"></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-ghost" id="routineCancel" type="button">Cancelar</button>
+        <button class="btn-primary" id="routineSave" type="button">Salvar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ================= MODAL: MOTIVO DA QUEBRA ================= -->
   <div class="modal-overlay hidden" id="breakModal">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="breakModalTitle">
@@ -238,6 +310,7 @@
   <div class="toast hidden" id="toast"></div>
 
   <script src="./config.js"></script>
+  <script src="./phrases.js"></script>
   <script src="./push.js"></script>
   <script src="./db.js"></script>
   <script src="./app.js"></script>

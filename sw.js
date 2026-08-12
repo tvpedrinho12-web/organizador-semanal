@@ -1,10 +1,11 @@
 /* sw.js — cache offline + ação de notificação "Concluir" + recebimento de push */
-const CACHE = 'organizador-v3';
+const CACHE = 'organizador-v4';
 const ASSETS = [
   './',
   './index.html',
   './styles.css',
   './config.js',
+  './phrases.js',
   './push.js',
   './db.js',
   './app.js',
@@ -54,6 +55,10 @@ self.addEventListener('fetch', (e) => {
 function idbGet() {
   return new Promise((resolve) => {
     const req = indexedDB.open('organizador-semanal', 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
+    };
     req.onsuccess = () => {
       const db = req.result;
       const tx = db.transaction('kv', 'readonly');
