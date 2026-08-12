@@ -1,4 +1,4 @@
-/* app.js — Organizador Semanal (100% local) */
+/* app.js — Organizador Semanal (redesign IA, 100% local) */
 (function () {
   'use strict';
 
@@ -8,54 +8,55 @@
     { key: 'afternoon', label: 'Tarde' },
     { key: 'night', label: 'Noite' },
   ];
-  const DOW = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']; // getDay()
-  const DOW_TAB = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']; // ordem de exibição
+  const DOW = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];      // getDay()
+  const DOW_TAB = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];  // ordem de exibição
+  const DOW_FULL = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+  const CHECK_SVG = '<svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
   // ---------- Estado ----------
   let state = null;
-  let viewDate = todayISO();     // dia selecionado nas abas
+  let viewDate = todayISO();     // dia mostrado na tela Hoje
   let currentView = 'hoje';
   let saveTimer = null;
 
   function defaultState() {
     return {
-      version: 2,
-      goals: [],                 // { id, text, type:'bool'|'counter', target }
-      goalProgress: {},          // { [weekKey]: { [goalId]: { done, count } } }
-      days: {},                  // { [iso]: { morning:[item], afternoon:[item], night:[item], seeded:[routineId] } }
-      routines: [],              // { id, text, period, time, reminder, days:[0..6 getDay] }
-      streak: { history: [], breaksLogged: {} }, // history:[{date,len,reason}]
+      version: 3,
+      goals: [],
+      goalProgress: {},
+      days: {},
+      routines: [],
+      streak: { history: [], breaksLogged: {} },
       settings: { dailyReminder: '08:00', defaultReminder: 10, streakGoal: 30, eveningNudge: '20:30' },
+      aiUsage: { month: monthKey(), count: 0 },
+      ui: { suggestDismissed: {} },
     };
   }
 
-  // dismissais de banner só desta sessão (não persistem)
-  const dismissed = { carry: {}, sunday: false };
+  const dismissed = { carry: {}, sunday: false }; // dismissais só desta sessão
 
   // ---------- Helpers de data ----------
   function pad(n) { return String(n).padStart(2, '0'); }
   function toISO(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
   function fromISO(iso) { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d); }
   function todayISO() { return toISO(new Date()); }
+  function monthKey() { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; }
   function addDays(iso, n) { const d = fromISO(iso); d.setDate(d.getDate() + n); return toISO(d); }
   function mondayOf(iso) {
     const d = fromISO(iso);
-    const dow = d.getDay();               // 0=Dom
-    const diff = dow === 0 ? -6 : 1 - dow; // volta pra segunda
+    const dow = d.getDay();
+    const diff = dow === 0 ? -6 : 1 - dow;
     d.setDate(d.getDate() + diff);
     return toISO(d);
   }
-  function weekDates(iso) {
-    const mon = mondayOf(iso);
-    return Array.from({ length: 7 }, (_, i) => addDays(mon, i));
-  }
+  function weekDates(iso) { const mon = mondayOf(iso); return Array.from({ length: 7 }, (_, i) => addDays(mon, i)); }
   function weekKey(iso) { return mondayOf(iso); }
   function daysBetween(a, b) { return Math.round((fromISO(b) - fromISO(a)) / 86400000); }
-  function fmtLong(iso) {
-    const d = fromISO(iso);
-    const months = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
-    return `${DOW[d.getDay()]}, ${d.getDate()} ${months[d.getMonth()]}`;
-  }
+  const MONTHS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+  const MONTHS_FULL = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+  const DOW_LONG = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+  function fmtHeader(iso) { const d = fromISO(iso); return `${DOW_LONG[d.getDay()]}, ${d.getDate()} de ${MONTHS_FULL[d.getMonth()]}`; }
+  function fmtLong(iso) { const d = fromISO(iso); return `${DOW[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]}`; }
   function relLabel(iso) {
     const diff = daysBetween(todayISO(), iso);
     if (diff === 0) return 'Hoje';
@@ -63,6 +64,8 @@
     if (diff === 1) return 'Amanhã';
     return '';
   }
+  function nowMinutes() { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); }
+  function timeToMin(hhmm) { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; }
 
   // ---------- Acesso a dados ----------
   function dayData(iso) {
@@ -71,12 +74,10 @@
     return state.days[iso];
   }
 
-  // ---------- Rotinas (tarefas recorrentes) ----------
-  // Materializa as rotinas de um dia (só hoje em diante). Respeita exclusões: se o usuário
-  // apagou a instância daquele dia, o routineId fica em `seeded` e não é recriado.
+  // ---------- Rotinas ----------
   function materializeRoutines(iso) {
     if (!state.routines.length) return false;
-    if (iso < todayISO()) return false; // não reescreve o passado
+    if (iso < todayISO()) return false;
     const wd = fromISO(iso).getDay();
     const d = dayData(iso);
     let changed = false;
@@ -90,21 +91,16 @@
     });
     return changed;
   }
-  // Remove instâncias futuras (hoje em diante) ainda não concluídas de uma rotina,
-  // e limpa a marca `seeded` — usado ao editar/apagar rotina para re-semear com o novo conteúdo.
   function clearFutureRoutine(routineId, alsoUnseed) {
     const t = todayISO();
     Object.keys(state.days).forEach((iso) => {
       if (iso < t) return;
       const d = state.days[iso];
-      PERIODS.forEach((p) => {
-        d[p.key] = (d[p.key] || []).filter((it) => !(it.routineId === routineId && !it.done));
-      });
+      PERIODS.forEach((p) => { d[p.key] = (d[p.key] || []).filter((it) => !(it.routineId === routineId && !it.done)); });
       if (alsoUnseed && Array.isArray(d.seeded)) d.seeded = d.seeded.filter((id) => id !== routineId);
     });
   }
   function seedHorizon() {
-    // hoje + próximos 3 dias (garante que os lembretes de push tenham o que agendar)
     let changed = false;
     for (let i = 0; i <= 3; i++) { if (materializeRoutines(addDays(todayISO(), i))) changed = true; }
     return changed;
@@ -114,21 +110,41 @@
     if (!d) return [];
     return [...d.morning, ...d.afternoon, ...d.night];
   }
+  // itens com o período embutido (pra render/edição)
+  function itemsWithPeriod(iso) {
+    const d = state.days[iso];
+    if (!d) return [];
+    const out = [];
+    PERIODS.forEach((p) => (d[p.key] || []).forEach((it) => out.push({ it, period: p.key })));
+    return out;
+  }
   function dayStats(iso) {
     const items = allItems(iso);
     const total = items.length;
     const done = items.filter((i) => i.done).length;
     return { total, done, pct: total ? Math.round((done / total) * 100) : 0 };
   }
-  function isDayComplete(iso) {
-    const s = dayStats(iso);
-    return s.total > 0 && s.done === s.total;
-  }
+  function isDayComplete(iso) { const s = dayStats(iso); return s.total > 0 && s.done === s.total; }
   function progressFor(gid) {
     const wk = weekKey(viewDate);
     if (!state.goalProgress[wk]) state.goalProgress[wk] = {};
     if (!state.goalProgress[wk][gid]) state.goalProgress[wk][gid] = { done: false, count: 0 };
     return state.goalProgress[wk][gid];
+  }
+  function findItem(iso, id) {
+    const d = state.days[iso];
+    if (!d) return null;
+    for (const p of PERIODS) { const it = (d[p.key] || []).find((x) => x.id === id); if (it) return { it, period: p.key }; }
+    return null;
+  }
+  function removeItemById(iso, id) {
+    const d = state.days[iso];
+    if (!d) return false;
+    for (const p of PERIODS) {
+      const i = (d[p.key] || []).findIndex((x) => x.id === id);
+      if (i >= 0) { d[p.key].splice(i, 1); return true; }
+    }
+    return false;
   }
 
   // ---------- Persistência ----------
@@ -138,30 +154,47 @@
     syncPush();
   }
 
+  // ---------- Contador de uso da IA ----------
+  function bumpAiUsage() {
+    const m = monthKey();
+    if (!state.aiUsage || state.aiUsage.month !== m) state.aiUsage = { month: m, count: 0 };
+    state.aiUsage.count++;
+    save();
+  }
+  function aiUsageCount() {
+    const m = monthKey();
+    if (!state.aiUsage || state.aiUsage.month !== m) return 0;
+    return state.aiUsage.count;
+  }
+
   // ---------- Integração com o backend de push ----------
   function utcCronFromLocal(hhmm) {
     const [h, m] = hhmm.split(':').map(Number);
-    const off = new Date().getTimezoneOffset(); // minutos; UTC = local + off
+    const off = new Date().getTimezoneOffset();
     let total = h * 60 + m + off;
     total = ((total % 1440) + 1440) % 1440;
     return `${total % 60} ${Math.floor(total / 60)} * * *`;
   }
-  function pickPhrase(cat, fallback) {
-    return (window.Phrases && Phrases.pick(cat)) || fallback;
-  }
+  function pickPhrase(cat, fallback) { return (window.Phrases && Phrases.pick(cat)) || fallback; }
 
   function buildReminderPlan() {
     const s = state.settings;
-    seedHorizon(); // garante rotinas materializadas nos dias que vamos agendar
+    seedHorizon();
     const plan = { dailyCron: null, dailyNotification: null, tasks: [] };
+    const streak = computeStreak();
     if (s.dailyReminder) {
       plan.dailyCron = utcCronFromLocal(s.dailyReminder);
-      plan.dailyNotification = { title: 'Hora de organizar', body: pickPhrase('dailyReminder', 'Define suas prioridades antes que o dia te defina.'), tag: 'daily' };
+      plan.dailyNotification = {
+        title: 'Hora de organizar',
+        body: pickPhrase('dailyReminder', 'Define suas prioridades antes que o dia te defina.'),
+        tag: 'daily',
+        gen: { type: 'dailyReminder', streak },
+      };
     }
     const now = Date.now();
-    // agenda hoje + próximos 3 dias (o QStash guarda; dispara mesmo com o app fechado)
     for (let i = 0; i <= 3; i++) {
       const iso = addDays(todayISO(), i);
+      const st = dayStats(iso);
       allItems(iso).forEach((it) => {
         if (!it.time || it.done) return;
         const [h, m] = it.time.split(':').map(Number);
@@ -178,13 +211,13 @@
               tag: 'task-' + it.id,
               data: { itemId: it.id, date: iso },
               actions: [{ action: 'done', title: 'Concluir' }],
+              gen: { type: 'taskReminder', task: it.text, time: it.time, streak, doneToday: st.done, totalToday: st.total },
             },
           });
         }
       });
     }
 
-    // Nudge de "streak em risco": se HOJE tem tarefas e ainda há pendência, avisa à noite.
     const nudgeAt = s.eveningNudge || '20:30';
     const t = todayISO();
     const st = dayStatus(t);
@@ -193,14 +226,15 @@
       const d = fromISO(t); d.setHours(nh, nm, 0, 0);
       const fireAt = d.getTime();
       if (fireAt > now + 15000) {
+        const ds = dayStats(t);
         plan.tasks.push({
           key: t + '|__nudge',
           notBeforeUnix: Math.floor(fireAt / 1000),
           notification: {
             title: 'Sequência em risco',
             body: pickPhrase('streakRisk', 'O dia está acabando e a lista não. Fecha o que falta.'),
-            tag: 'nudge',
-            data: {},
+            tag: 'nudge', data: {},
+            gen: { type: 'streakRisk', streak, doneToday: ds.done, totalToday: ds.total, remaining: ds.total - ds.done },
           },
         });
       }
@@ -209,9 +243,7 @@
   }
   function syncPush() {
     if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
-    if (window.PushClient && window.PushClient.supported()) {
-      window.PushClient.scheduleSync(buildReminderPlan());
-    }
+    if (window.PushClient && window.PushClient.supported()) window.PushClient.scheduleSync(buildReminderPlan());
   }
   async function enablePush() {
     if (!(window.PushClient && window.PushClient.supported())) return;
@@ -220,19 +252,8 @@
   }
 
   // ---------- Streak ----------
-  // Dias sem NENHUMA tarefa são "descanso": não contam nem quebram a sequência (freeze).
-  // Só um dia com tarefas e alguma pendente ('incomplete') quebra o streak.
-  function dayStatus(iso) {
-    const s = dayStats(iso);
-    if (s.total === 0) return 'empty';
-    return s.done === s.total ? 'complete' : 'incomplete';
-  }
-  function earliestDay() {
-    const keys = Object.keys(state.days);
-    if (!keys.length) return todayISO();
-    return keys.sort()[0];
-  }
-  // conta dias 'complete' terminando em `iso`, pulando dias vazios, parando no primeiro 'incomplete'
+  function dayStatus(iso) { const s = dayStats(iso); if (s.total === 0) return 'empty'; return s.done === s.total ? 'complete' : 'incomplete'; }
+  function earliestDay() { const keys = Object.keys(state.days); if (!keys.length) return todayISO(); return keys.sort()[0]; }
   function streakLenEndingAt(iso) {
     const floor = earliestDay();
     let count = 0, cursor = iso;
@@ -240,14 +261,12 @@
       const st = dayStatus(cursor);
       if (st === 'complete') count++;
       else if (st === 'incomplete') break;
-      // 'empty' => pula (freeze)
       cursor = addDays(cursor, -1);
     }
     return count;
   }
   function computeStreak() {
     const t = todayISO();
-    // hoje ainda pode ser fechado: se não está completo, olha a partir de ontem
     let start = dayStatus(t) === 'complete' ? t : addDays(t, -1);
     return streakLenEndingAt(start);
   }
@@ -258,22 +277,27 @@
       const st = dayStatus(cursor);
       if (st === 'complete') { run++; best = Math.max(best, run); }
       else if (st === 'incomplete') { run = 0; }
-      // 'empty' => mantém run (freeze)
       cursor = addDays(cursor, -1);
     }
     return best;
   }
-  // Detecta a quebra mais recente: um dia 'incomplete' (teve tarefas, sobrou pendência)
-  // que encerrou uma sequência de dias completos. Ignora dias vazios.
+  function completeDaysThisMonth() {
+    const now = new Date();
+    const y = now.getFullYear(), mo = now.getMonth();
+    const days = new Date(y, mo + 1, 0).getDate();
+    let n = 0;
+    for (let d = 1; d <= days; d++) { const iso = toISO(new Date(y, mo, d)); if (isDayComplete(iso)) n++; }
+    return n;
+  }
   function detectBreak() {
     const floor = earliestDay();
-    let cursor = addDays(todayISO(), -1); // não cobra o dia de hoje (ainda em aberto)
+    let cursor = addDays(todayISO(), -1);
     while (cursor >= floor) {
       const st = dayStatus(cursor);
       if (st === 'incomplete') {
-        const len = streakLenEndingAt(addDays(cursor, -1)); // sequência que existia antes da falha
+        const len = streakLenEndingAt(addDays(cursor, -1));
         if (len > 0) return { date: cursor, len };
-        return null; // falhou mas não havia sequência a perder
+        return null;
       }
       cursor = addDays(cursor, -1);
     }
@@ -283,52 +307,330 @@
     const info = detectBreak();
     if (!info) return;
     if (state.streak.breaksLogged[info.date]) return;
-    // registra a quebra IMEDIATAMENTE (não depende do modal) — corrige perda de histórico
     state.streak.breaksLogged[info.date] = true;
     state.streak.history.push({ date: info.date, len: info.len, reason: null });
     save();
-    openBreakModal(info.date, info.len); // modal só adiciona o motivo, se o usuário quiser
+    openBreakModal(info.date, info.len);
   }
 
-  // ---------- Render ----------
+  // ---------- Utilidades visuais ----------
+  function conic(pct, color, rest) {
+    const c = color || 'var(--purple)';
+    const r = rest || 'var(--track)';
+    return `conic-gradient(${c} 0% ${pct}%, ${r} ${pct}% 100%)`;
+  }
+
+  // ---------- Render (dispatcher) ----------
   function render() {
-    if (materializeRoutines(viewDate)) save(); // preenche rotinas do dia visto (hoje em diante)
-    renderHeader();
-    renderTabs();
-    renderGoals();
-    renderChecklist();
-    renderDayProgress();
-    renderSundayBanner();
-    renderCarryBanner();
+    if (materializeRoutines(viewDate)) save();
+    renderHoje();
+    if (currentView === 'semana') renderSemana();
+    if (currentView === 'progresso') renderProgresso();
+    if (currentView === 'ajustes') { /* estático + diag; nada dependente do dia */ }
   }
 
-  function renderHeader() {
-    $('#viewDate').textContent = fmtLong(viewDate);
-    $('#viewRel').textContent = relLabel(viewDate) || '';
-    const streak = computeStreak();
-    $('#streakCount').textContent = streak;
-    $('#streakGoal').textContent = '/' + state.settings.streakGoal;
+  // ---------- Tela HOJE ----------
+  function renderHoje() {
+    const isToday = viewDate === todayISO();
+    $('#hojeTitle').textContent = fmtHeader(viewDate);
+    const count = allItems(viewDate).length;
+    const countTxt = `${count} ${count === 1 ? 'tarefa' : 'tarefas'}${isToday ? ' hoje' : ''}`;
+    let sub;
+    if (isToday) {
+      const streak = computeStreak();
+      sub = `${streak} ${streak === 1 ? 'dia seguido' : 'dias seguidos'} · ${countTxt}`;
+    } else {
+      const rel = relLabel(viewDate);
+      sub = (rel ? rel + ' · ' : '') + countTxt;
+    }
+    $('#hojeSub').textContent = sub;
+
+    renderTimed();
+    renderUntimed();
+    renderDaySummary();
+    renderSuggestion();
   }
 
-  function renderTabs() {
-    const tabs = $('#dayTabs');
-    tabs.innerHTML = '';
-    weekDates(viewDate).forEach((iso) => {
-      const d = fromISO(iso);
-      const idx = (d.getDay() + 6) % 7; // 0=Seg
-      const btn = document.createElement('button');
-      btn.className = 'day-tab';
-      if (iso === viewDate) btn.classList.add('active');
-      if (iso === todayISO()) btn.classList.add('today');
-      if (isDayComplete(iso)) btn.classList.add('done');
-      btn.innerHTML = `<span class="dt-name">${DOW_TAB[idx]}</span><span class="dt-num">${d.getDate()}</span>`;
-      btn.onclick = () => { viewDate = iso; render(); };
-      tabs.appendChild(btn);
+  function timedNextId(sorted) {
+    if (viewDate !== todayISO()) return null;
+    const now = nowMinutes();
+    const cand = sorted.find((x) => !x.it.done && timeToMin(x.it.time) >= now);
+    return cand ? cand.it.id : null;
+  }
+
+  function renderTimed() {
+    const wrap = $('#timedList');
+    wrap.innerHTML = '';
+    const timed = itemsWithPeriod(viewDate).filter((x) => x.it.time).sort((a, b) => timeToMin(a.it.time) - timeToMin(b.it.time));
+    $('#timedEmpty').classList.toggle('hidden', timed.length > 0);
+    const nextId = timedNextId(timed);
+    timed.forEach(({ it, period }) => {
+      const row = document.createElement('div');
+      row.className = 'timed-item' + (it.done ? ' done' : '') + (it.id === nextId ? ' next' : '');
+      row.innerHTML = `
+        <div class="timed-time">${it.time}</div>
+        <div class="timed-card">
+          <div class="timed-text">${esc(it.text)}${it.routineId ? '<span class="routine-badge">rotina</span>' : ''}</div>
+          <button class="check ${it.done ? 'on' : ''}" aria-label="Concluir">${CHECK_SVG}</button>
+        </div>`;
+      row.querySelector('.check').onclick = (e) => { e.stopPropagation(); toggleItem(viewDate, period, it.id); };
+      row.querySelector('.timed-text').onclick = (e) => openItemMenu(e, it, period);
+      wrap.appendChild(row);
     });
+  }
+
+  function renderUntimed() {
+    const section = $('#untimedSection');
+    const wrap = $('#untimedList');
+    wrap.innerHTML = '';
+    const untimed = itemsWithPeriod(viewDate).filter((x) => !x.it.time);
+    section.classList.toggle('hidden', untimed.length === 0);
+    untimed.forEach(({ it, period }) => {
+      const row = document.createElement('div');
+      row.className = 'todo-row' + (it.done ? ' done' : '');
+      row.innerHTML = `
+        <button class="check sm ${it.done ? 'on' : ''}" aria-label="Concluir">${CHECK_SVG}</button>
+        <div class="todo-text">${esc(it.text)}${it.routineId ? '<span class="routine-badge">rotina</span>' : ''}</div>`;
+      row.querySelector('.check').onclick = (e) => { e.stopPropagation(); toggleItem(viewDate, period, it.id); };
+      row.querySelector('.todo-text').onclick = (e) => openItemMenu(e, it, period);
+      wrap.appendChild(row);
+    });
+  }
+
+  function renderDaySummary() {
+    const slot = $('#daySummarySlot');
+    const s = dayStats(viewDate);
+    if (s.total === 0) { slot.innerHTML = ''; return; }
+    const streak = computeStreak();
+    const isToday = viewDate === todayISO();
+    const sub = isToday ? `${streak} ${streak === 1 ? 'dia seguido' : 'dias seguidos'}` : (s.pct === 100 ? 'dia completo' : `${s.total - s.done} ${s.total - s.done === 1 ? 'pendente' : 'pendentes'}`);
+    slot.innerHTML = `
+      <div class="day-summary">
+        <div class="mini-ring" style="background:${conic(s.pct)}">
+          <div class="mini-ring-hole">${s.pct}%</div>
+        </div>
+        <div class="day-summary-text">
+          <div class="day-summary-main">${s.done} de ${s.total} ${s.done === 1 ? 'concluída' : 'concluídas'}</div>
+          <div class="day-summary-sub">${sub}</div>
+        </div>
+      </div>`;
+  }
+
+  // ---------- Sugestões proativas (no máx. 1, na tela Hoje) ----------
+  function pruneSuggestDismissed() {
+    const ui = state.ui || (state.ui = { suggestDismissed: {} });
+    const floor = addDays(todayISO(), -7);
+    Object.keys(ui.suggestDismissed || {}).forEach((k) => { const date = k.split('|')[0]; if (date < floor) delete ui.suggestDismissed[k]; });
+  }
+  function isSuggestDismissed(key) { return !!(state.ui && state.ui.suggestDismissed && state.ui.suggestDismissed[todayISO() + '|' + key]); }
+  function dismissSuggestion(key) {
+    const ui = state.ui || (state.ui = { suggestDismissed: {} });
+    ui.suggestDismissed[todayISO() + '|' + key] = true;
+    save(); renderSuggestion();
+  }
+
+  function buildSuggestion() {
+    const t = todayISO();
+    // 1) pendências de ontem
+    const y = addDays(t, -1);
+    const pend = pendingFrom(y);
+    if (pend.length && !isSuggestDismissed('carry')) {
+      return {
+        key: 'carry', tag: 'PENDÊNCIAS',
+        text: `Você deixou ${pend.length} ${pend.length === 1 ? 'tarefa' : 'tarefas'} para trás ontem. Quer trazer para hoje?`,
+        primary: { label: 'Trazer', fn: () => { carryMove(); } },
+        ghosts: [{ label: 'Ignorar', fn: () => dismissSuggestion('carry') }],
+      };
+    }
+    // 2) rotina do dia que foi removida
+    const wd = fromISO(t).getDay();
+    const d = state.days[t];
+    for (const r of state.routines) {
+      if (!r.days || !r.days.includes(wd)) continue;
+      const present = d && PERIODS.some((p) => (d[p.key] || []).some((it) => it.routineId === r.id));
+      const key = 'routine-' + r.id;
+      if (!present && !isSuggestDismissed(key)) {
+        return {
+          key, tag: 'SUGESTÃO',
+          text: `Você costuma "${r.text}" toda ${DOW_FULL[wd]} e ainda não colocou hoje.`,
+          primary: { label: 'Adicionar', fn: () => { addRoutineInstanceToday(r); dismissSuggestion(key); } },
+          ghosts: [{ label: 'Ignorar', fn: () => dismissSuggestion(key) }],
+        };
+      }
+    }
+    // 3) período sobrecarregado
+    if (d) {
+      for (const p of PERIODS) {
+        const pendingCount = (d[p.key] || []).filter((it) => !it.done).length;
+        const key = 'heavy-' + p.key;
+        if (pendingCount >= 5 && !isSuggestDismissed(key)) {
+          return {
+            key, tag: 'SUGESTÃO',
+            text: `Seu ${p.label.toLowerCase()} está pesado — ${pendingCount} tarefas pendentes. Quer mover a última para amanhã?`,
+            primary: { label: 'Mover', fn: () => { moveLastPendingToTomorrow(p.key); dismissSuggestion(key); } },
+            ghosts: [{ label: 'Manter', fn: () => dismissSuggestion(key) }],
+          };
+        }
+      }
+    }
+    // 4) domingo: revisar semana
+    if (wd === 0 && !isSuggestDismissed('sunday')) {
+      return {
+        key: 'sunday', tag: 'DOMINGO',
+        text: pickPhrase('weeklySummary', 'Semana encerrada. Olha os números e ajusta.'),
+        primary: { label: 'Ver progresso', fn: () => switchView('progresso') },
+        ghosts: [{ label: 'Ignorar', fn: () => dismissSuggestion('sunday') }],
+      };
+    }
+    return null;
+  }
+
+  function renderSuggestion() {
+    const slot = $('#suggestionSlot');
+    slot.innerHTML = '';
+    if (viewDate !== todayISO()) return;
+    pruneSuggestDismissed();
+    const sug = buildSuggestion();
+    if (!sug) return;
+    const el = document.createElement('div');
+    el.className = 'suggestion';
+    el.innerHTML = `
+      <div class="suggestion-head"><span class="suggestion-dot"></span><span class="suggestion-tag">${sug.tag}</span></div>
+      <div class="suggestion-text">${esc(sug.text)}</div>
+      <div class="suggestion-actions"></div>`;
+    const acts = el.querySelector('.suggestion-actions');
+    const pb = document.createElement('button');
+    pb.className = 's-primary'; pb.textContent = sug.primary.label; pb.onclick = sug.primary.fn;
+    acts.appendChild(pb);
+    (sug.ghosts || []).forEach((g) => { const b = document.createElement('button'); b.className = 's-ghost'; b.textContent = g.label; b.onclick = g.fn; acts.appendChild(b); });
+    slot.appendChild(el);
+  }
+
+  function addRoutineInstanceToday(r) {
+    const per = PERIODS.some((p) => p.key === r.period) ? r.period : 'morning';
+    const t = todayISO();
+    dayData(t)[per].push({ id: uid(), routineId: r.id, text: r.text, time: r.time || null, reminder: (r.reminder != null ? r.reminder : null), done: false });
+    if (!dayData(t).seeded.includes(r.id)) dayData(t).seeded.push(r.id);
+    save(); render(); scheduleNotifications();
+    toast('Adicionado');
+  }
+  function moveLastPendingToTomorrow(periodKey) {
+    const t = todayISO();
+    const arr = dayData(t)[periodKey];
+    for (let i = arr.length - 1; i >= 0; i--) {
+      if (!arr[i].done) {
+        const it = arr.splice(i, 1)[0];
+        dayData(addDays(t, 1))[periodKey].push({ id: uid(), text: it.text, time: it.time || null, reminder: (it.reminder != null ? it.reminder : null), done: false });
+        save(); render(); scheduleNotifications();
+        toast('Movida para amanhã');
+        return;
+      }
+    }
+  }
+
+  // pendências de um dia
+  function pendingFrom(iso) {
+    const d = state.days[iso];
+    if (!d) return [];
+    const out = [];
+    PERIODS.forEach((per) => (d[per.key] || []).forEach((it) => { if (!it.done) out.push({ it, period: per.key }); }));
+    return out;
+  }
+  function carryMove() {
+    const t = todayISO();
+    const y = addDays(t, -1);
+    const pend = pendingFrom(y);
+    if (!pend.length) return;
+    pend.forEach(({ it, period }) => {
+      dayData(t)[period].push({ id: uid(), text: it.text, time: it.time || null, reminder: (it.reminder != null ? it.reminder : null), done: false });
+    });
+    dismissSuggestion('carry');
+    save(); render(); scheduleNotifications();
+    toast(`${pend.length} ${pend.length === 1 ? 'pendência trazida' : 'pendências trazidas'}`);
+  }
+
+  // ---------- CRUD itens ----------
+  function toggleItem(iso, period, id) {
+    const found = findItem(iso, id);
+    if (!found) return;
+    found.it.done = !found.it.done;
+    save(); render();
+    if (isDayComplete(iso)) maybeCelebrate(iso);
+  }
+  function deleteItem(iso, period, id) { removeItemById(iso, id); save(); render(); scheduleNotifications(); }
+  function duplicateItem(it, period) {
+    dayData(viewDate)[period].push({ id: uid(), text: it.text, time: it.time || null, reminder: (it.reminder != null ? it.reminder : null), done: false });
+    save(); render(); scheduleNotifications();
+    toast('Tarefa duplicada');
+  }
+  function moveItemToTomorrow(iso, period, id) {
+    const found = findItem(iso, id);
+    if (!found) return;
+    removeItemById(iso, id);
+    dayData(addDays(iso, 1))[found.period].push({ id: uid(), text: found.it.text, time: found.it.time || null, reminder: (found.it.reminder != null ? found.it.reminder : null), done: false });
+    save(); render(); scheduleNotifications();
+    toast('Movida para amanhã');
+  }
+
+  function openItemMenu(ev, it, period) {
+    openCtxMenu(ev, [
+      { label: 'Editar', fn: () => openItemModal(it, period) },
+      { label: 'Mover para amanhã', fn: () => moveItemToTomorrow(viewDate, period, it.id) },
+      { label: 'Duplicar', fn: () => duplicateItem(it, period) },
+      { label: 'Apagar', danger: true, fn: () => deleteItem(viewDate, period, it.id) },
+    ]);
+  }
+
+  // ---------- CRUD metas ----------
+  function deleteGoal(id) {
+    state.goals = state.goals.filter((g) => g.id !== id);
+    Object.values(state.goalProgress).forEach((wk) => delete wk[id]);
+    save(); renderGoals();
+  }
+
+  // ---------- Tela SEMANA ----------
+  function renderSemana() {
+    const week = weekDates(viewDate);
+    const first = fromISO(week[0]), last = fromISO(week[6]);
+    const range = first.getMonth() === last.getMonth()
+      ? `${first.getDate()} – ${last.getDate()} de ${MONTHS_FULL[last.getMonth()]}`
+      : `${first.getDate()} ${MONTHS[first.getMonth()]} – ${last.getDate()} ${MONTHS[last.getMonth()]}`;
+    $('#semanaSub').textContent = range;
+
+    const list = $('#weekList');
+    list.innerHTML = '';
+    const t = todayISO();
+    week.forEach((iso) => {
+      const d = fromISO(iso);
+      const idx = (d.getDay() + 6) % 7;
+      const s = dayStats(iso);
+      const isToday = iso === t;
+      const el = document.createElement('div');
+      el.className = 'week-day' + (isToday ? ' today' : '');
+      const countHtml = isToday
+        ? `<span>Hoje</span>${s.total ? `<span class="frac">${s.done}/${s.total}</span>` : ''}`
+        : `${s.total} ${s.total === 1 ? 'tarefa' : 'tarefas'}`;
+      const fillPct = s.total ? Math.max(s.pct, 4) : 0;
+      el.innerHTML = `
+        <div class="week-date">
+          <div class="week-dow">${DOW_TAB[idx].toUpperCase()}</div>
+          <div class="week-num">${d.getDate()}</div>
+        </div>
+        <div class="week-info">
+          <div class="week-count">${countHtml}</div>
+          <div class="week-bar"><span style="width:${fillPct}%"></span></div>
+        </div>
+        <div class="week-chev">›</div>`;
+      el.onclick = () => { viewDate = iso; switchView('hoje'); };
+      list.appendChild(el);
+    });
+
+    renderGoals();
   }
 
   function renderGoals() {
     const list = $('#goalList');
+    if (!list) return;
     list.innerHTML = '';
     $('#goalsEmpty').classList.toggle('hidden', state.goals.length > 0);
     state.goals.forEach((g) => {
@@ -337,7 +639,6 @@
       li.className = 'goal-item';
       const complete = g.type === 'counter' ? p.count >= g.target : p.done;
       if (complete) li.classList.add('complete');
-
       if (g.type === 'counter') {
         li.innerHTML = `
           <span class="goal-text">${esc(g.text)}</span>
@@ -351,308 +652,42 @@
         li.querySelector('[data-act="inc"]').onclick = () => { p.count = Math.min(g.target, p.count + 1); save(); renderGoals(); };
       } else {
         li.innerHTML = `
-          <button class="goal-check ${p.done ? 'on' : ''}">${p.done ? '✓' : ''}</button>
+          <button class="check ${p.done ? 'on' : ''}" aria-label="Concluir">${CHECK_SVG}</button>
           <span class="goal-text">${esc(g.text)}</span>
           <button class="row-menu" aria-label="Opções">⋯</button>`;
-        li.querySelector('.goal-check').onclick = () => { p.done = !p.done; save(); renderGoals(); };
+        li.querySelector('.check').onclick = () => { p.done = !p.done; save(); renderGoals(); };
       }
       li.querySelector('.row-menu').onclick = (e) => openCtxMenu(e, [
         { label: 'Editar', fn: () => openGoalModal(g) },
-        { label: 'Apagar', danger: true, fn: () => { deleteGoal(g.id); } },
+        { label: 'Apagar', danger: true, fn: () => deleteGoal(g.id) },
       ]);
       list.appendChild(li);
     });
   }
 
-  function renderChecklist() {
-    const wrap = $('#checklist');
-    wrap.innerHTML = '';
-    const d = dayData(viewDate);
-    PERIODS.forEach((per) => {
-      const items = d[per.key];
-      const done = items.filter((i) => i.done).length;
-      const block = document.createElement('section');
-      block.className = 'block';
-      block.innerHTML = `
-        <div class="block-head">
-          <h2>${per.label}</h2>
-          <span class="block-count">${done}/${items.length}</span>
-        </div>
-        <div class="item-list"></div>
-        <div class="quick-row">
-          <input class="quick-add" type="text" placeholder="+ tarefa rápida" autocomplete="off" aria-label="Adicionar tarefa rápida em ${per.label.toLowerCase()}" />
-          <button class="add-item-detail" type="button" aria-label="Adicionar com detalhes">⋯</button>
-        </div>`;
-      const listEl = block.querySelector('.item-list');
-      items.forEach((it) => listEl.appendChild(renderItem(it, per.key)));
-      const quick = block.querySelector('.quick-add');
-      quick.addEventListener('keydown', (e) => {
-        if (e.key !== 'Enter') return;
-        const text = quick.value.trim();
-        if (!text) return;
-        dayData(viewDate)[per.key].push({ id: uid(), text, time: null, reminder: null, done: false });
-        quick.value = '';
-        save(); render(); scheduleNotifications();
-        // re-foca no mesmo campo pra adicionar várias em sequência
-        setTimeout(() => { const q = $$('.block')[PERIODS.indexOf(per)]?.querySelector('.quick-add'); if (q) q.focus(); }, 0);
-      });
-      block.querySelector('.add-item-detail').onclick = () => openItemModal(null, per.key);
-      wrap.appendChild(block);
-    });
-  }
-
-  function renderItem(it, periodKey) {
-    const el = document.createElement('div');
-    el.className = 'item' + (it.done ? ' done' : '');
-    const timeHtml = it.time
-      ? `<div class="item-time ${isPast(it.time) ? 'past' : ''}">${it.time}${it.reminder ? ' · avisa ' + it.reminder + 'min antes' : ''}</div>`
-      : '';
-    const routineTag = it.routineId ? '<span class="routine-tag" title="Rotina fixa">rotina</span>' : '';
-    el.innerHTML = `
-      <button class="item-check ${it.done ? 'on' : ''}">${it.done ? '✓' : ''}</button>
-      <div class="item-body">
-        <div class="item-text">${esc(it.text)}${routineTag}</div>
-        ${timeHtml}
-      </div>
-      <button class="row-menu" aria-label="Opções">⋯</button>`;
-    el.querySelector('.item-check').onclick = () => toggleItem(viewDate, periodKey, it.id);
-    el.querySelector('.row-menu').onclick = (e) => openCtxMenu(e, [
-      { label: 'Editar', fn: () => openItemModal(it, periodKey) },
-      { label: 'Duplicar', fn: () => duplicateItem(it, periodKey) },
-      { label: 'Apagar', danger: true, fn: () => deleteItem(viewDate, periodKey, it.id) },
-    ]);
-    return el;
-  }
-
-  function renderDayProgress() {
-    const s = dayStats(viewDate);
-    const bar = $('#dayProgress').querySelector('.day-progress-bar');
-    $('#dayProgressFill').style.width = s.pct + '%';
-    bar.classList.toggle('full', s.pct === 100 && s.total > 0);
-    $('#dayProgressLabel').textContent = s.total ? s.pct + '%' : '—';
-  }
-
-  let sundayPhrase = null;
-  function renderSundayBanner() {
-    const isSunday = fromISO(todayISO()).getDay() === 0;
-    const showIt = isSunday && currentView === 'hoje';
-    $('#sundayBanner').classList.toggle('hidden', !showIt);
-    if (showIt) {
-      if (!sundayPhrase) sundayPhrase = pickPhrase('weeklySummary', 'Semana encerrada. Olha os números e ajusta.');
-      $('#sundayBannerText').textContent = sundayPhrase;
-    }
-  }
-
-  // pendências (não concluídas) de um dia, com período
-  function pendingFrom(iso) {
-    const d = state.days[iso];
-    if (!d) return [];
-    const out = [];
-    PERIODS.forEach((per) => (d[per.key] || []).forEach((it) => { if (!it.done) out.push({ it, period: per.key }); }));
-    return out;
-  }
-  function renderCarryBanner() {
-    const banner = $('#carryBanner');
-    const t = todayISO();
-    const y = addDays(t, -1);
-    const pend = pendingFrom(y);
-    const showIt = currentView === 'hoje' && viewDate === t && pend.length > 0 && !dismissed.carry[y];
-    banner.classList.toggle('hidden', !showIt);
-    if (showIt) {
-      $('#carryText').textContent = `Você deixou ${pend.length} ${pend.length === 1 ? 'tarefa' : 'tarefas'} pra trás ontem. Traga pra hoje e resolva.`;
-    }
-  }
-  function carryMove() {
-    const t = todayISO();
-    const y = addDays(t, -1);
-    const pend = pendingFrom(y);
-    if (!pend.length) return;
-    pend.forEach(({ it, period }) => {
-      dayData(t)[period].push({ id: uid(), text: it.text, time: it.time || null, reminder: (it.reminder != null ? it.reminder : null), done: false });
-    });
-    dismissed.carry[y] = true;
-    save(); render(); scheduleNotifications();
-    toast(`${pend.length} ${pend.length === 1 ? 'pendência trazida' : 'pendências trazidas'}`);
-  }
-
-  function isPast(hhmm) {
-    if (viewDate !== todayISO()) return viewDate < todayISO();
-    const now = new Date();
-    const [h, m] = hhmm.split(':').map(Number);
-    return now.getHours() > h || (now.getHours() === h && now.getMinutes() > m);
-  }
-
-  // ---------- CRUD itens ----------
-  function toggleItem(iso, period, id) {
-    const it = dayData(iso)[period].find((x) => x.id === id);
-    if (!it) return;
-    it.done = !it.done;
-    save();
-    render();
-    if (isDayComplete(iso)) maybeCelebrate(iso);
-  }
-  function deleteItem(iso, period, id) {
-    const arr = dayData(iso)[period];
-    const i = arr.findIndex((x) => x.id === id);
-    if (i >= 0) arr.splice(i, 1);
-    save(); render();
-  }
-  function duplicateItem(it, period) {
-    // cópia solta (não herda vínculo de rotina), logo abaixo, não concluída
-    dayData(viewDate)[period].push({ id: uid(), text: it.text, time: it.time || null, reminder: (it.reminder != null ? it.reminder : null), done: false });
-    save(); render(); scheduleNotifications();
-    toast('Tarefa duplicada');
-  }
-
-  // ---------- CRUD metas ----------
-  function deleteGoal(id) {
-    state.goals = state.goals.filter((g) => g.id !== id);
-    Object.values(state.goalProgress).forEach((wk) => delete wk[id]);
-    save(); renderGoals();
-  }
-
-  // ---------- Notificações (fase local) ----------
-  const timers = [];
-  function clearTimers() { timers.forEach(clearTimeout); timers.length = 0; }
-
-  function scheduleNotifications() {
-    clearTimers();
-    if (window.__pushActive) return; // o push do servidor assumiu os lembretes
-    if (!('Notification' in window) || Notification.permission !== 'granted') return;
-
-    // lembrete diário
-    const [dh, dm] = state.settings.dailyReminder.split(':').map(Number);
-    scheduleAt(dh, dm, () => {
-      notify('Hora de organizar', { body: pickPhrase('dailyReminder', 'Define suas prioridades antes que o dia te defina.'), tag: 'daily' });
-    });
-
-    // por tarefa (somente as de hoje, com horário, não concluídas)
-    const t = todayISO();
-    allItems(t).forEach((it) => {
-      if (!it.time || it.done) return;
-      const [h, m] = it.time.split(':').map(Number);
-      const rem = (it.reminder != null ? it.reminder : state.settings.defaultReminder) || 0;
-      let target = new Date(); target.setHours(h, m, 0, 0);
-      target = new Date(target.getTime() - rem * 60000);
-      const delay = target.getTime() - Date.now();
-      if (delay > 0 && delay < 26 * 3600000) {
-        timers.push(setTimeout(() => {
-          notify(it.text, {
-            body: `${it.time} · ${pickPhrase('taskReminder', 'Está no horário. Levanta e faz.')}`,
-            tag: 'task-' + it.id,
-            data: { itemId: it.id, date: t },
-            actions: [{ action: 'done', title: 'Concluir' }],
-          });
-        }, delay));
-      }
-    });
-  }
-
-  function scheduleAt(h, m, fn) {
-    const now = new Date();
-    let target = new Date(); target.setHours(h, m, 0, 0);
-    if (target <= now) target.setDate(target.getDate() + 1);
-    const delay = target.getTime() - now.getTime();
-    if (delay < 26 * 3600000) timers.push(setTimeout(fn, delay));
-  }
-
-  async function notify(title, opts) {
-    try {
-      const reg = await navigator.serviceWorker.getRegistration();
-      if (reg) { reg.showNotification(title, opts); return; }
-    } catch (e) { /* fallback abaixo */ }
-    if ('Notification' in window && Notification.permission === 'granted') {
-      new Notification(title, opts);
-    }
-  }
-
-  const MILESTONES = [7, 14, 21, 30, 50, 75, 100, 150, 200, 365];
-  function maybeCelebrate(iso) {
-    if (iso !== todayISO()) return;
-    const streak = computeStreak();
-    // marco: meta batida ou número redondo de sequência
-    if (streak > 0 && streak === state.settings.streakGoal) {
-      toast('Meta de ' + streak + ' dias batida. Agora sustenta.');
-    } else if (MILESTONES.includes(streak)) {
-      toast(streak + ' dias seguidos. ' + pickPhrase('dayComplete', 'É assim que se constrói.'));
-    } else {
-      toast(pickPhrase('dayComplete', 'Dia fechado. É assim que se constrói.') + ' (' + streak + ')');
-    }
-  }
-
-  // ---------- Views ----------
-  function switchView(v) {
-    currentView = v;
-    ['hoje', 'stats', 'ajustes'].forEach((name) => {
-      $('#view-' + name).classList.toggle('hidden', name !== v);
-    });
-    $$('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === v));
-    if (v === 'stats') renderStats();
-    if (v === 'ajustes') renderSettings();
-    renderSundayBanner();
-  }
-
-  // ---------- Stats ----------
-  function renderStats() {
+  // ---------- Tela PROGRESSO ----------
+  function renderProgresso() {
     const week = weekDates(viewDate);
-    // esta semana
     let wDone = 0, wTotal = 0;
     week.forEach((iso) => { const s = dayStats(iso); wDone += s.done; wTotal += s.total; });
     const wpct = wTotal ? Math.round((wDone / wTotal) * 100) : 0;
-    const completeDays = week.filter(isDayComplete).length;
-    $('#weekSummary').innerHTML = `
-      <div class="stat-box"><div class="big">${wpct}%</div><div class="lbl">semana</div></div>
-      <div class="stat-box"><div class="big">${completeDays}/7</div><div class="lbl">dias 100%</div></div>
-      <div class="stat-box"><div class="big">${wDone}</div><div class="lbl">tarefas feitas</div></div>`;
+    $('#weekRing').style.background = conic(wpct, 'var(--purple)', 'oklch(0.24 0.017 285)');
+    $('#weekRingPct').textContent = wpct + '%';
+    $('#weekTasksCaption').textContent = `${wDone} ${wDone === 1 ? 'tarefa concluída' : 'tarefas concluídas'} nesta semana`;
 
-    // barras da semana
-    const bars = $('#weekBars');
-    bars.innerHTML = '';
-    week.forEach((iso) => {
-      const s = dayStats(iso);
-      const d = fromISO(iso);
-      const idx = (d.getDay() + 6) % 7;
-      const bar = document.createElement('div');
-      bar.className = 'weekbar' + (iso === todayISO() ? ' today' : '');
-      bar.innerHTML = `
-        <div class="bar-track"><div class="bar-fill ${s.pct === 100 && s.total ? 'full' : ''}" style="height:${s.total ? Math.max(s.pct, 4) : 0}%"></div></div>
-        <div class="bar-lbl">${DOW_TAB[idx]}</div>`;
-      bars.appendChild(bar);
-    });
+    const tiles = $('#statTiles');
+    tiles.innerHTML = `
+      <div class="stat-tile"><div class="st-num hl">${computeStreak()}</div><div class="st-lbl">sequência<br/>atual</div></div>
+      <div class="stat-tile"><div class="st-num">${completeDaysThisMonth()}</div><div class="st-lbl">dias 100%<br/>este mês</div></div>
+      <div class="stat-tile"><div class="st-num">${bestStreak()}</div><div class="st-lbl">melhor<br/>sequência</div></div>`;
 
-    renderWeeklySummary(week);
     renderHistory30();
-    renderStreakStats();
-  }
 
-  function renderWeeklySummary(week) {
-    let done = 0, total = 0;
-    const pending = [];
-    week.forEach((iso) => {
-      const s = dayStats(iso);
-      done += s.done; total += s.total;
-      PERIODS.forEach((per) => {
-        (state.days[iso]?.[per.key] || []).forEach((it) => {
-          if (!it.done) pending.push(`${DOW[fromISO(iso).getDay()]}: ${it.text}`);
-        });
-      });
-    });
-    const goalsDone = state.goals.filter((g) => {
-      const p = (state.goalProgress[weekKey(viewDate)] || {})[g.id];
-      if (!p) return false;
-      return g.type === 'counter' ? p.count >= g.target : p.done;
-    }).length;
-
-    let html = `
-      <div class="sum-line"><span>Tarefas concluídas</span><span class="sum-val">${done}/${total}</span></div>
-      <div class="sum-line"><span>Metas batidas</span><span class="sum-val">${goalsDone}/${state.goals.length}</span></div>
-      <div class="sum-line"><span>Dias 100%</span><span class="sum-val">${week.filter(isDayComplete).length}/7</span></div>`;
-    if (pending.length) {
-      html += `<div class="sum-pending"><h4>Ficou pendente (${pending.length})</h4><ul>${pending.slice(0, 12).map((p) => `<li>• ${esc(p)}</li>`).join('')}${pending.length > 12 ? `<li>… +${pending.length - 12}</li>` : ''}</ul></div>`;
-    } else if (total > 0) {
-      html += `<div class="sum-pending"><h4>Tudo em dia ✓</h4></div>`;
-    }
-    $('#summaryContent').innerHTML = html;
+    const bh = $('#breakHistory');
+    const hist = (state.streak.history || []).slice().reverse();
+    bh.innerHTML = hist.length
+      ? hist.slice(0, 8).map((h) => `<li><b>${h.len} ${h.len === 1 ? 'dia' : 'dias'}</b> até ${fmtLong(h.date)}${h.reason ? ` — ${esc(h.reason)}` : ''}</li>`).join('')
+      : '<li>Nenhuma quebra registrada. Mantém assim.</li>';
   }
 
   function renderHistory30() {
@@ -664,27 +699,18 @@
       const s = dayStats(iso);
       const cell = document.createElement('div');
       cell.className = 'h-cell';
-      if (s.total > 0) cell.classList.add(s.pct === 100 ? 'full' : 'part');
+      if (s.total > 0) {
+        if (s.pct === 100) cell.classList.add('l3');
+        else if (s.pct >= 50) cell.classList.add('l2');
+        else cell.classList.add('l1');
+      }
       if (iso === t) cell.classList.add('today');
       cell.title = `${iso} — ${s.total ? s.pct + '%' : 'vazio'}`;
       grid.appendChild(cell);
     }
   }
 
-  function renderStreakStats() {
-    $('#streakStats').innerHTML = `
-      <div class="stat-box"><div class="big">${computeStreak()}</div><div class="lbl">atual</div></div>
-      <div class="stat-box"><div class="big">${bestStreak()}</div><div class="lbl">recorde</div></div>
-      <div class="stat-box"><div class="big">${state.settings.streakGoal}</div><div class="lbl">meta</div></div>`;
-    const bh = $('#breakHistory');
-    const hist = (state.streak.history || []).slice().reverse();
-    bh.innerHTML = hist.length
-      ? hist.map((h) => `<li><b>${h.len} ${h.len === 1 ? 'dia' : 'dias'}</b> até ${fmtLong(h.date)}${h.reason ? ` — ${esc(h.reason)}` : ''}</li>`).join('')
-      : '<li style="border:none;color:var(--muted-2)">Nenhuma quebra registrada.</li>';
-  }
-
   // ---------- Ferramentas de semana ----------
-  // Copia a estrutura de tarefas (sem 'done', sem duplicar rotinas) da semana de srcMon p/ destMon.
   function copyWeek(srcMon, destMon, skipPast) {
     const t = todayISO();
     let copied = 0;
@@ -696,7 +722,7 @@
       if (!src) continue;
       PERIODS.forEach((per) => {
         (src[per.key] || []).forEach((it) => {
-          if (it.routineId) return; // rotinas se materializam sozinhas — não duplica
+          if (it.routineId) return;
           dayData(destIso)[per.key].push({ id: uid(), text: it.text, time: it.time || null, reminder: (it.reminder != null ? it.reminder : null), done: false });
           copied++;
         });
@@ -716,16 +742,75 @@
     $('#weekToolsResult').textContent = n ? `${n} ${n === 1 ? 'tarefa copiada' : 'tarefas copiadas'} para a próxima semana.` : 'Nada pra copiar (semana atual sem tarefas manuais).';
   }
 
+  // ---------- Notificações (fallback local) ----------
+  const timers = [];
+  function clearTimers() { timers.forEach(clearTimeout); timers.length = 0; }
+  function scheduleNotifications() {
+    clearTimers();
+    if (window.__pushActive) return;
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    const [dh, dm] = state.settings.dailyReminder.split(':').map(Number);
+    scheduleAt(dh, dm, () => notify('Hora de organizar', { body: pickPhrase('dailyReminder', 'Define suas prioridades antes que o dia te defina.'), tag: 'daily' }));
+    const t = todayISO();
+    allItems(t).forEach((it) => {
+      if (!it.time || it.done) return;
+      const [h, m] = it.time.split(':').map(Number);
+      const rem = (it.reminder != null ? it.reminder : state.settings.defaultReminder) || 0;
+      let target = new Date(); target.setHours(h, m, 0, 0);
+      target = new Date(target.getTime() - rem * 60000);
+      const delay = target.getTime() - Date.now();
+      if (delay > 0 && delay < 26 * 3600000) {
+        timers.push(setTimeout(() => notify(it.text, {
+          body: `${it.time} · ${pickPhrase('taskReminder', 'Está no horário. Levanta e faz.')}`,
+          tag: 'task-' + it.id, data: { itemId: it.id, date: t }, actions: [{ action: 'done', title: 'Concluir' }],
+        }), delay));
+      }
+    });
+  }
+  function scheduleAt(h, m, fn) {
+    const now = new Date();
+    let target = new Date(); target.setHours(h, m, 0, 0);
+    if (target <= now) target.setDate(target.getDate() + 1);
+    const delay = target.getTime() - now.getTime();
+    if (delay < 26 * 3600000) timers.push(setTimeout(fn, delay));
+  }
+  async function notify(title, opts) {
+    try { const reg = await navigator.serviceWorker.getRegistration(); if (reg) { reg.showNotification(title, opts); return; } }
+    catch (e) { /* fallback abaixo */ }
+    if ('Notification' in window && Notification.permission === 'granted') new Notification(title, opts);
+  }
+  const MILESTONES = [7, 14, 21, 30, 50, 75, 100, 150, 200, 365];
+  function maybeCelebrate(iso) {
+    if (iso !== todayISO()) return;
+    const streak = computeStreak();
+    if (streak > 0 && streak === state.settings.streakGoal) toast('Meta de ' + streak + ' dias batida. Agora sustenta.');
+    else if (MILESTONES.includes(streak)) toast(streak + ' dias seguidos. ' + pickPhrase('dayComplete', 'É assim que se constrói.'));
+    else toast(pickPhrase('dayComplete', 'Dia fechado. É assim que se constrói.') + ' (' + streak + ')');
+  }
+
+  // ---------- Views ----------
+  const SCREENS = ['hoje', 'semana', 'progresso', 'ajustes'];
+  function switchView(v) {
+    currentView = v;
+    SCREENS.forEach((name) => $('#screen-' + name).classList.toggle('hidden', name !== v));
+    $$('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === v));
+    if (v === 'hoje') renderHoje();
+    if (v === 'semana') renderSemana();
+    if (v === 'progresso') renderProgresso();
+    if (v === 'ajustes') renderSettings();
+    window.scrollTo(0, 0);
+  }
+
   // ---------- Ajustes ----------
   function renderSettings() {
     $('#dailyReminder').value = state.settings.dailyReminder;
     $('#defaultReminder').value = state.settings.defaultReminder;
     $('#streakGoalInput').value = state.settings.streakGoal;
+    $('#aiUsageCount').textContent = aiUsageCount();
     renderRoutines();
     updateNotifButton();
     refreshDiag();
   }
-
   async function refreshDiag() {
     const el = $('#pushDiag');
     if (!el) return;
@@ -746,20 +831,13 @@
   function updateNotifButton() {
     const btn = $('#notifToggle');
     const note = $('#notifNote');
-    if (!('Notification' in window)) {
-      btn.textContent = 'Indisponível'; btn.disabled = true;
-      note.textContent = 'Este navegador não suporta notificações.';
-      return;
-    }
+    if (!('Notification' in window)) { btn.textContent = 'Indisponível'; btn.disabled = true; note.textContent = 'Este navegador não suporta notificações.'; return; }
     const p = Notification.permission;
     if (p === 'granted') { btn.textContent = 'Ativadas ✓'; btn.disabled = true; }
     else if (p === 'denied') { btn.textContent = 'Bloqueadas'; btn.disabled = true; note.textContent = 'Você bloqueou. Libere nas configurações do navegador.'; }
     else { btn.textContent = 'Ativar'; btn.disabled = false; }
-    if (p === 'granted') {
-      note.textContent = 'No iPhone, as notificações só disparam com o app instalado na tela inicial. Enquanto o app está fechado por muito tempo, o iOS pode não entregar — a versão com servidor (push real) virá depois.';
-    } else if (p === 'default') {
-      note.textContent = 'Ative para receber o lembrete diário e os avisos das tarefas.';
-    }
+    if (p === 'granted') note.textContent = 'No iPhone, as notificações só disparam com o app instalado na tela inicial (adicionado à Tela de Início). O texto pode ser gerado pela IA na hora, com o banco de frases como reserva.';
+    else if (p === 'default') note.textContent = 'Ative para receber o lembrete diário e os avisos das tarefas.';
   }
 
   // ---------- Modais ----------
@@ -773,8 +851,6 @@
     $('#itemTime').value = item ? (item.time || '') : '';
     $('#itemReminder').value = item ? (item.reminder != null ? item.reminder : '') : '';
     $('#itemReminder').placeholder = String(state.settings.defaultReminder);
-
-    // duplicar / repetir só ao criar
     $('#dupWrap').classList.toggle('hidden', !!item);
     $('#repeatWrap').classList.toggle('hidden', !!item);
     $('#itemRepeat').checked = false;
@@ -797,7 +873,6 @@
     show('#itemModal');
     setTimeout(() => $('#itemText').focus(), 50);
   }
-
   function saveItemFromModal() {
     const text = $('#itemText').value.trim();
     if (!text) { toast('Escreva a tarefa'); return; }
@@ -805,16 +880,13 @@
     const time = $('#itemTime').value || null;
     const remRaw = $('#itemReminder').value;
     const reminder = remRaw === '' ? null : Math.max(0, parseInt(remRaw, 10) || 0);
-
     if (editing.item) {
-      // mover de período se mudou
       const oldArr = dayData(viewDate)[editing.period];
       const i = oldArr.findIndex((x) => x.id === editing.item.id);
       if (i >= 0) oldArr.splice(i, 1);
       editing.item.text = text; editing.item.time = time; editing.item.reminder = reminder;
       dayData(viewDate)[period].push(editing.item);
     } else if ($('#itemRepeat').checked) {
-      // vira rotina fixa: dias marcados => dias da semana (getDay)
       const isos = $$('#dupDays .dup-day').filter((b) => b.dataset.on === '1').map((b) => b.dataset.iso);
       const days = Array.from(new Set((isos.length ? isos : [viewDate]).map((iso) => fromISO(iso).getDay()))).sort();
       state.routines.push({ id: uid(), text, period, time, reminder, days });
@@ -823,9 +895,7 @@
     } else {
       const targets = $$('#dupDays .dup-day').filter((b) => b.dataset.on === '1').map((b) => b.dataset.iso);
       const list = targets.length ? targets : [viewDate];
-      list.forEach((iso) => {
-        dayData(iso)[period].push({ id: uid(), text, time, reminder, done: false });
-      });
+      list.forEach((iso) => dayData(iso)[period].push({ id: uid(), text, time, reminder, done: false }));
       if (list.length > 1) toast(`Adicionado em ${list.length} dias`);
     }
     save(); hide('#itemModal'); render(); scheduleNotifications();
@@ -846,11 +916,8 @@
     if (!text) { toast('Escreva a meta'); return; }
     const type = $('#goalType').value;
     const target = type === 'counter' ? Math.max(1, parseInt($('#goalTarget').value, 10) || 1) : null;
-    if (editing.goal) {
-      editing.goal.text = text; editing.goal.type = type; editing.goal.target = target;
-    } else {
-      state.goals.push({ id: uid(), text, type, target });
-    }
+    if (editing.goal) { editing.goal.text = text; editing.goal.type = type; editing.goal.target = target; }
+    else state.goals.push({ id: uid(), text, type, target });
     save(); hide('#goalModal'); renderGoals();
   }
 
@@ -859,7 +926,7 @@
     const wrap = $('#routineDays'); wrap.innerHTML = '';
     const sel = new Set(selected || []);
     DOW_TAB.forEach((label, i) => {
-      const dow = (i + 1) % 7; // 0=Seg(getDay1) ... 6=Dom(getDay0)
+      const dow = (i + 1) % 7;
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'dup-day' + (sel.has(dow) ? ' on' : '');
@@ -892,11 +959,9 @@
     if (!days.length) { toast('Escolha ao menos um dia'); return; }
     if (editing.routine) {
       const r = editing.routine;
-      clearFutureRoutine(r.id, true); // remove instâncias futuras não concluídas p/ re-semear com o novo conteúdo
+      clearFutureRoutine(r.id, true);
       r.text = text; r.period = period; r.time = time; r.reminder = reminder; r.days = days;
-    } else {
-      state.routines.push({ id: uid(), text, period, time, reminder, days });
-    }
+    } else state.routines.push({ id: uid(), text, period, time, reminder, days });
     seedHorizon();
     save(); hide('#routineModal'); render(); renderRoutines(); scheduleNotifications();
     toast(editing.routine ? 'Rotina atualizada' : 'Rotina criada');
@@ -933,7 +998,7 @@
 
   function openBreakModal(date, len) {
     const phrase = (window.Phrases && Phrases.pick('streakBreak')) || 'A sequência caiu. Recomeça hoje.';
-    $('#breakModalText').innerHTML = `<strong>${esc(phrase)}</strong><br><span style="color:var(--muted-2)">Sequência perdida: ${len} ${len === 1 ? 'dia' : 'dias'}. Anota o motivo? (opcional)</span>`;
+    $('#breakModalText').innerHTML = `<strong>${esc(phrase)}</strong><br><span style="color:var(--muted)">Sequência perdida: ${len} ${len === 1 ? 'dia' : 'dias'}. Anota o motivo? (opcional)</span>`;
     $('#breakReason').value = '';
     $('#breakModal').dataset.date = date;
     $('#breakModal').dataset.len = len;
@@ -942,10 +1007,9 @@
   function saveBreak(withReason) {
     const m = $('#breakModal');
     const date = m.dataset.date;
-    // a entrada já foi criada em checkBreak; aqui só completamos o motivo
     const entry = (state.streak.history || []).slice().reverse().find((h) => h.date === date);
-    if (entry) { entry.reason = withReason ? ($('#breakReason').value.trim() || null) : null; }
-    else { state.streak.history.push({ date, len: Number(m.dataset.len), reason: withReason ? ($('#breakReason').value.trim() || null) : null }); }
+    if (entry) entry.reason = withReason ? ($('#breakReason').value.trim() || null) : null;
+    else state.streak.history.push({ date, len: Number(m.dataset.len), reason: withReason ? ($('#breakReason').value.trim() || null) : null });
     save(); hide('#breakModal');
   }
 
@@ -964,10 +1028,10 @@
       menu.appendChild(b);
     });
     document.body.appendChild(menu);
-    const r = ev.currentTarget.getBoundingClientRect();
-    const mw = 160;
-    menu.style.top = Math.min(r.bottom + 4, window.innerHeight - 120) + 'px';
-    menu.style.left = Math.max(8, Math.min(r.right - mw, window.innerWidth - mw - 8)) + 'px';
+    const r = (ev.currentTarget || ev.target).getBoundingClientRect();
+    const mw = 170;
+    menu.style.top = Math.min(r.bottom + 4, window.innerHeight - 200) + 'px';
+    menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - mw - 8)) + 'px';
     ctxEl = menu;
     setTimeout(() => document.addEventListener('click', closeCtxMenu, { once: true }), 0);
   }
@@ -986,41 +1050,207 @@
     clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.add('hidden'), 2200);
   }
 
+  // ---------- Snackbar (Desfazer) ----------
+  let snackTimer = null, snackFn = null;
+  function showUndo(msg, undoFn, ms) {
+    const sb = $('#snackbar');
+    $('#snackbarText').textContent = msg;
+    snackFn = undoFn;
+    sb.classList.remove('hidden');
+    clearTimeout(snackTimer);
+    snackTimer = setTimeout(hideUndo, ms || 6000);
+  }
+  function hideUndo() { $('#snackbar').classList.add('hidden'); snackFn = null; clearTimeout(snackTimer); }
+
+  // ---------- Criar tarefa por texto (IA) ----------
+  function apiBase() { return ((window.PUSH_CONFIG && window.PUSH_CONFIG.apiBase) || '').replace(/\/$/, ''); }
+  let aiBusy = false;
+  async function aiCreateTask() {
+    if (aiBusy) return;
+    const input = $('#aiText');
+    const hint = $('#aiHint');
+    const text = input.value.trim();
+    hint.classList.remove('err');
+    if (!text) { input.focus(); return; }
+    aiBusy = true; $('#aiBar').classList.add('busy'); $('#aiSend').disabled = true; hint.textContent = 'Interpretando…';
+    try {
+      bumpAiUsage();
+      const res = await fetch(apiBase() + '/api/parse-task', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, today: todayISO() }),
+      });
+      let data = null;
+      try { data = await res.json(); } catch { /* resposta não-JSON */ }
+      if (!data) { hint.classList.add('err'); hint.textContent = 'IA indisponível aqui (precisa do backend).'; return; }
+      if (!data.ok) { hint.classList.add('err'); hint.textContent = data.message || 'Não consegui entender. Tente falar de outro jeito.'; return; }
+
+      const t = data.task;
+      const period = PERIODS.some((p) => p.key === t.period) ? t.period : 'morning';
+      const date = /^\d{4}-\d{2}-\d{2}$/.test(t.date) ? t.date : todayISO();
+      const newId = uid();
+      dayData(date)[period].push({ id: newId, text: t.task, time: t.time || null, reminder: null, done: false });
+      input.value = '';
+      hint.textContent = 'Ex.: "Amanhã às 14h preciso gravar três vídeos"';
+      if (date !== viewDate) viewDate = date;
+      save(); render(); scheduleNotifications();
+      const when = date === todayISO() ? 'hoje' : (relLabel(date).toLowerCase() || fmtLong(date));
+      const timePart = t.time ? ' às ' + t.time : '';
+      const cap = t.task.charAt(0).toUpperCase() + t.task.slice(1);
+      showUndo(`${cap} ${date === todayISO() ? 'adicionada hoje' : 'adicionada ' + when}${timePart}`, () => {
+        removeItemById(date, newId);
+        save(); render(); scheduleNotifications();
+        toast('Desfeito');
+      });
+    } catch (e) {
+      hint.classList.add('err'); hint.textContent = 'Sem conexão com a IA. Tente de novo.';
+    } finally {
+      aiBusy = false; $('#aiBar').classList.remove('busy'); $('#aiSend').disabled = false;
+    }
+  }
+
+  // ---------- Organizar meu dia (IA, requer aprovação) ----------
+  let organizeProposal = null;
+  async function organizeDay() {
+    const iso = viewDate;
+    const items = itemsWithPeriod(iso).filter((x) => !x.it.done).map(({ it, period }) => ({ id: it.id, task: it.text, time: it.time || null, period }));
+    if (items.length < 2) { toast('Adicione mais tarefas para organizar'); return; }
+    const btn = $('#organizeDay');
+    btn.disabled = true; btn.textContent = 'Organizando…';
+    try {
+      bumpAiUsage();
+      const res = await fetch(apiBase() + '/api/organize-day', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items, today: todayISO(), date: iso }),
+      });
+      let data = null; try { data = await res.json(); } catch {}
+      if (!data) { toast('IA indisponível aqui (precisa do backend).'); return; }
+      if (!data.ok) { toast(data.message || 'Não consegui organizar agora.'); return; }
+      const changes = (data.changes || []).filter((c) => c && c.id && findItem(iso, c.id) && (c.time || c.period));
+      // só mudanças que realmente alteram algo
+      const real = changes.filter((c) => { const f = findItem(iso, c.id); if (!f) return false; return (c.time && c.time !== (f.it.time || null)) || (c.period && c.period !== f.period); });
+      if (!real.length) { toast('Seu dia já está bem organizado.'); return; }
+      organizeProposal = { date: iso, changes: real };
+      openOrganizeModal(real, iso);
+    } catch (e) {
+      toast('Sem conexão com a IA. Tente de novo.');
+    } finally {
+      btn.disabled = false; btn.textContent = 'Organizar meu dia';
+    }
+  }
+  function openOrganizeModal(changes, iso) {
+    const list = $('#organizeList');
+    list.innerHTML = '';
+    const perLabel = (k) => (PERIODS.find((p) => p.key === k) || {}).label || '';
+    changes.forEach((c) => {
+      const f = findItem(iso, c.id);
+      const parts = [];
+      if (c.time && c.time !== (f.it.time || null)) parts.push(`horário → ${c.time}`);
+      if (c.period && c.period !== f.period) parts.push(`período → ${perLabel(c.period)}`);
+      const row = document.createElement('div');
+      row.className = 'organize-row';
+      row.innerHTML = `<div class="or-task">${esc(f.it.text)}</div><div class="or-change">${esc(parts.join(' · '))}</div>`;
+      list.appendChild(row);
+    });
+    show('#organizeModal');
+  }
+  function applyOrganize() {
+    if (!organizeProposal) { hide('#organizeModal'); return; }
+    const { date, changes } = organizeProposal;
+    changes.forEach((c) => {
+      const f = findItem(date, c.id);
+      if (!f) return;
+      const newPeriod = c.period && PERIODS.some((p) => p.key === c.period) ? c.period : f.period;
+      if (c.time && /^\d{1,2}:\d{2}$/.test(c.time)) f.it.time = c.time;
+      if (newPeriod !== f.period) { removeItemById(date, c.id); dayData(date)[newPeriod].push(f.it); }
+    });
+    organizeProposal = null;
+    save(); hide('#organizeModal'); render(); scheduleNotifications();
+    toast('Dia reorganizado');
+  }
+
+  // ---------- Voz (Web Speech API) ----------
+  let recog = null, recognizing = false;
+  function initVoice() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { $('#aiMic').classList.add('hidden'); return; }
+    recog = new SR();
+    recog.lang = 'pt-BR';
+    recog.interimResults = true;
+    recog.continuous = false;
+    recog.onstart = () => { recognizing = true; $('#aiMic').classList.add('recording'); $('#listening').classList.remove('hidden'); };
+    recog.onerror = () => { stopVoiceUI(); };
+    recog.onend = () => {
+      stopVoiceUI();
+      const val = $('#aiText').value.trim();
+      if (val && voiceProduced) aiCreateTask();
+      voiceProduced = false;
+    };
+    recog.onresult = (e) => {
+      let txt = '';
+      for (let i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript;
+      $('#aiText').value = txt;
+      voiceProduced = true;
+    };
+  }
+  let voiceProduced = false;
+  function stopVoiceUI() { recognizing = false; $('#aiMic').classList.remove('recording'); $('#listening').classList.add('hidden'); }
+  function toggleVoice() {
+    if (!recog) return;
+    if (recognizing) { try { recog.stop(); } catch {} return; }
+    voiceProduced = false;
+    $('#aiText').value = '';
+    try { recog.start(); } catch (e) { /* já rodando */ }
+  }
+
   // ---------- Eventos ----------
   function bindEvents() {
     $$('.nav-btn').forEach((b) => b.onclick = () => switchView(b.dataset.view));
-    $('#addGoalBtn').onclick = () => openGoalModal(null);
-    $('#streakChip').onclick = () => switchView('stats');
-    // criar por texto (IA)
-    $('#aiParse').onclick = aiCreateTask;
-    $('#aiText').addEventListener('keydown', (e) => { if (e.key === 'Enter') aiCreateTask(); });
-    $('#openSummaryFromBanner').onclick = () => switchView('stats');
+    $$('[data-open-ajustes]').forEach((b) => b.onclick = () => switchView('ajustes'));
+    $('#ajustesBack').onclick = () => switchView('hoje');
 
-    // modais item
+    // barra IA
+    $('#aiSend').onclick = aiCreateTask;
+    $('#aiMic').onclick = toggleVoice;
+    $('#aiText').addEventListener('keydown', (e) => { if (e.key === 'Enter') aiCreateTask(); });
+    $('#aiText').addEventListener('focus', () => $('#aiBar').classList.add('focused'));
+    $('#aiText').addEventListener('blur', () => $('#aiBar').classList.remove('focused'));
+    $('#organizeDay').onclick = organizeDay;
+
+    // snackbar
+    $('#snackbarAction').onclick = () => { if (snackFn) snackFn(); hideUndo(); };
+
+    // metas
+    $('#addGoalBtn').onclick = () => openGoalModal(null);
+
+    // modal item
     $('#itemCancel').onclick = () => hide('#itemModal');
     $('#itemSave').onclick = saveItemFromModal;
     $('#itemText').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveItemFromModal(); });
+    $('#itemRepeat').onchange = () => { $('#dupLabel').textContent = $('#itemRepeat').checked ? 'Repetir nesses dias da semana' : 'Duplicar para outros dias'; };
+
     // modal meta
     $('#goalCancel').onclick = () => hide('#goalModal');
     $('#goalSave').onclick = saveGoalFromModal;
     $('#goalType').onchange = () => $('#goalTargetWrap').classList.toggle('hidden', $('#goalType').value !== 'counter');
     $('#goalText').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveGoalFromModal(); });
-    // checkbox "repetir toda semana" (modal item)
-    $('#itemRepeat').onchange = () => { $('#dupLabel').textContent = $('#itemRepeat').checked ? 'Repetir nesses dias da semana' : 'Duplicar para outros dias'; };
+
     // modal rotina
     $('#addRoutineBtn').onclick = () => openRoutineModal(null);
     $('#routineCancel').onclick = () => hide('#routineModal');
     $('#routineSave').onclick = saveRoutineFromModal;
     $('#routineText').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveRoutineFromModal(); });
-    // banners
-    $('#carryMove').onclick = carryMove;
-    $('#carryDismiss').onclick = () => { dismissed.carry[addDays(todayISO(), -1)] = true; renderCarryBanner(); };
-    // ferramentas de semana
-    $('#copyPrevWeek').onclick = copyPrevWeekIntoCurrent;
-    $('#copyNextWeek').onclick = copyCurrentIntoNext;
+
     // modal break
     $('#breakSkip').onclick = () => saveBreak(false);
     $('#breakSave').onclick = () => saveBreak(true);
+
+    // modal organizar
+    $('#organizeCancel').onclick = () => { organizeProposal = null; hide('#organizeModal'); };
+    $('#organizeApply').onclick = applyOrganize;
+
+    // ferramentas de semana
+    $('#copyPrevWeek').onclick = copyPrevWeekIntoCurrent;
+    $('#copyNextWeek').onclick = copyCurrentIntoNext;
 
     // fechar modal ao clicar no fundo
     $$('.modal-overlay').forEach((ov) => ov.addEventListener('click', (e) => { if (e.target === ov) ov.classList.add('hidden'); }));
@@ -1029,7 +1259,7 @@
     $('#notifToggle').onclick = requestNotif;
     $('#dailyReminder').onchange = (e) => { state.settings.dailyReminder = e.target.value || '08:00'; save(); scheduleNotifications(); };
     $('#defaultReminder').onchange = (e) => { state.settings.defaultReminder = clampInt(e.target.value, 0, 120, 10); e.target.value = state.settings.defaultReminder; save(); };
-    $('#streakGoalInput').onchange = (e) => { state.settings.streakGoal = clampInt(e.target.value, 1, 365, 30); e.target.value = state.settings.streakGoal; save(); renderHeader(); };
+    $('#streakGoalInput').onchange = (e) => { state.settings.streakGoal = clampInt(e.target.value, 1, 365, 30); e.target.value = state.settings.streakGoal; save(); renderHoje(); };
     $('#resetBtn').onclick = resetAll;
 
     // diagnóstico push
@@ -1059,10 +1289,10 @@
       refreshDiag();
     };
 
-    // rollover: revalida ao voltar pro app
+    // rollover ao voltar pro app
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden) {
-        if (swReg) swReg.update().catch(() => {}); // força checar SW novo ao reabrir (iOS)
+        if (swReg) swReg.update().catch(() => {});
         seedHorizon();
         render();
         checkBreak();
@@ -1072,11 +1302,7 @@
     });
   }
 
-  function clampInt(v, min, max, dflt) {
-    const n = parseInt(v, 10);
-    if (isNaN(n)) return dflt;
-    return Math.max(min, Math.min(max, n));
-  }
+  function clampInt(v, min, max, dflt) { const n = parseInt(v, 10); if (isNaN(n)) return dflt; return Math.max(min, Math.min(max, n)); }
 
   async function requestNotif() {
     if (!('Notification' in window)) return;
@@ -1090,62 +1316,18 @@
       }
     } catch (e) { console.error(e); }
   }
-
   function resetAll() {
     if (!confirm('Apagar TODOS os dados deste aparelho? Isso não tem como desfazer.')) return;
     state = defaultState();
-    save();
-    viewDate = todayISO();
+    save(); viewDate = todayISO();
     render(); switchView('hoje');
     toast('Tudo apagado');
-  }
-
-  // ---------- Criar tarefa por texto (IA, via /api/parse-task) ----------
-  function apiBase() { return ((window.PUSH_CONFIG && window.PUSH_CONFIG.apiBase) || '').replace(/\/$/, ''); }
-  let aiBusy = false;
-  async function aiCreateTask() {
-    if (aiBusy) return;
-    const input = $('#aiText');
-    const note = $('#aiResult');
-    const btn = $('#aiParse');
-    const text = input.value.trim();
-    note.classList.remove('err');
-    if (!text) { input.focus(); return; }
-    aiBusy = true; btn.disabled = true; note.textContent = 'interpretando…';
-    try {
-      const res = await fetch(apiBase() + '/api/parse-task', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, today: todayISO() }),
-      });
-      let data = null;
-      try { data = await res.json(); } catch { /* resposta não-JSON (ex.: 404 do GitHub Pages) */ }
-      if (!data) { note.classList.add('err'); note.textContent = 'IA indisponível aqui (precisa do backend).'; return; }
-      if (!data.ok) { note.classList.add('err'); note.textContent = data.message || 'Não consegui interpretar. Tente reformular.'; return; }
-
-      const t = data.task;
-      const period = PERIODS.some((p) => p.key === t.period) ? t.period : 'morning';
-      const date = /^\d{4}-\d{2}-\d{2}$/.test(t.date) ? t.date : todayISO();
-      dayData(date)[period].push({ id: uid(), text: t.task, time: t.time || null, reminder: null, done: false });
-      input.value = '';
-      note.textContent = '';
-      if (date !== viewDate) viewDate = date; // leva o usuário pro dia certo
-      save(); render(); scheduleNotifications();
-      const when = date === todayISO() ? 'hoje' : (relLabel(date) || fmtLong(date));
-      const perLabel = (PERIODS.find((p) => p.key === period) || {}).label || '';
-      toast(`Criado: ${t.task} — ${when}, ${perLabel.toLowerCase()}${t.time ? ' ' + t.time : ''}`);
-    } catch (e) {
-      note.classList.add('err'); note.textContent = 'Sem conexão com a IA. Tente de novo.';
-    } finally {
-      aiBusy = false; btn.disabled = false;
-    }
   }
 
   // ---------- Service worker ----------
   let swReg = null;
   function registerSW() {
     if ('serviceWorker' in navigator) {
-      // updateViaCache:'none' => o browser sempre revalida o sw.js na rede (evita SW preso em cache no iOS)
       navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
         .then((reg) => { swReg = reg; reg.update().catch(() => {}); })
         .catch(console.error);
@@ -1156,14 +1338,8 @@
         }
         if (ev.data && ev.data.type === 'item-done') {
           const { date, itemId } = ev.data;
-          const d = state.days[date];
-          if (d) {
-            for (const per of PERIODS) {
-              const it = d[per.key].find((x) => x.id === itemId);
-              if (it) { it.done = true; break; }
-            }
-            save(); render();
-          }
+          const found = findItem(date, itemId);
+          if (found) { found.it.done = true; save(); render(); }
         }
       });
     }
@@ -1171,17 +1347,19 @@
 
   // ---------- Boot ----------
   async function init() {
-    try {
-      state = await DB.getState();
-    } catch (e) { console.error(e); }
+    try { state = await DB.getState(); } catch (e) { console.error(e); }
     if (!state) { state = defaultState(); await DB.setState(state).catch(() => {}); }
-    // migração leve
+    // migração leve (aditiva — nunca apaga dados existentes)
     state.settings = Object.assign(defaultState().settings, state.settings || {});
     state.streak = Object.assign({ history: [], breaksLogged: {} }, state.streak || {});
     if (!Array.isArray(state.routines)) state.routines = [];
-    state.version = 2;
+    if (!state.aiUsage || typeof state.aiUsage.count !== 'number') state.aiUsage = { month: monthKey(), count: 0 };
+    if (!state.ui || typeof state.ui !== 'object') state.ui = { suggestDismissed: {} };
+    if (!state.ui.suggestDismissed) state.ui.suggestDismissed = {};
+    state.version = 3;
 
     bindEvents();
+    initVoice();
     registerSW();
     seedHorizon();
     render();

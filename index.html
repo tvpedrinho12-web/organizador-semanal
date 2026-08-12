@@ -4,10 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
   <title>Organizador Semanal</title>
-  <meta name="description" content="Organização semanal: metas, checklist do dia, streak e estatísticas. 100% offline." />
+  <meta name="description" content="Organizador pessoal inteligente: fale ou escreva o que precisa fazer e o app organiza. 100% offline." />
 
   <link rel="manifest" href="./manifest.webmanifest" />
-  <meta name="theme-color" content="#0B0B0D" />
+  <meta name="theme-color" content="#16151A" />
 
   <!-- iOS PWA -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -20,107 +20,100 @@
 </head>
 <body>
   <div id="app">
-    <!-- ================= HEADER ================= -->
-    <header class="app-header">
-      <div class="header-top">
-        <div class="header-title">
-          <h1 id="viewDate">—</h1>
-          <span id="viewRel" class="header-sub">—</span>
+
+    <!-- ============================================================= -->
+    <!-- SCREEN: HOJE                                                   -->
+    <!-- ============================================================= -->
+    <main class="screen" id="screen-hoje">
+      <header class="scr-head">
+        <div class="scr-head-text">
+          <h1 id="hojeTitle">—</h1>
+          <p class="scr-sub" id="hojeSub">—</p>
         </div>
-        <button id="streakChip" class="streak-chip" type="button" aria-label="Sequência">
-          <span class="streak-flame">◆</span>
-          <span id="streakCount">0</span><span class="streak-goal" id="streakGoal">/30</span>
+        <button class="gear-btn" data-open-ajustes type="button" aria-label="Ajustes">
+          <svg viewBox="0 0 24 24" width="19" height="19" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.7"/>
+            <path d="M12 2.5v2M12 19.5v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2.5 12h2M19.5 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+          </svg>
         </button>
-      </div>
+      </header>
 
-      <!-- Abas dos 7 dias -->
-      <nav class="day-tabs" id="dayTabs" aria-label="Dias da semana"></nav>
-    </header>
-
-    <!-- ================= VIEW: HOJE ================= -->
-    <main class="view" id="view-hoje">
-      <div id="sundayBanner" class="banner hidden">
-        <div>
-          <strong>Resumo da semana</strong>
-          <p id="sundayBannerText">É domingo — veja o que você cumpriu.</p>
+      <!-- Barra de comando IA -->
+      <section class="ai-block">
+        <div class="ai-label">O que você precisa organizar?</div>
+        <div class="ai-bar" id="aiBar">
+          <input type="text" id="aiText" placeholder="Fale ou escreva aqui…" autocomplete="off" enterkeyhint="done" aria-label="Criar tarefa por texto" />
+          <button class="ai-mic" id="aiMic" type="button" aria-label="Falar">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
+              <rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/>
+              <path d="M6 11a6 6 0 0 0 12 0M12 17v4M9 21h6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+            </svg>
+          </button>
+          <button class="ai-send" id="aiSend" type="button" aria-label="Enviar">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
+              <path d="M12 20V5M6 11l6-6 6 6" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
         </div>
-        <button class="btn-ghost" id="openSummaryFromBanner" type="button">Ver</button>
-      </div>
-
-      <div id="carryBanner" class="banner hidden">
-        <div>
-          <strong id="carryTitle">Pendências de ontem</strong>
-          <p id="carryText">Você deixou tarefas pra trás. Traga pra hoje e resolva.</p>
-        </div>
-        <div class="banner-actions">
-          <button class="btn-ghost" id="carryDismiss" type="button">Ignorar</button>
-          <button class="btn-primary" id="carryMove" type="button">Trazer</button>
-        </div>
-      </div>
-
-      <!-- Criar tarefa por texto (IA) -->
-      <section class="card ai-card">
-        <div class="ai-row">
-          <input type="text" id="aiText" placeholder="Ex: reunião amanhã 14h, treino de manhã…" autocomplete="off" aria-label="Criar tarefa por texto" />
-          <button class="btn-primary" id="aiParse" type="button">Criar</button>
-        </div>
-        <p class="note ai-note" id="aiResult"></p>
+        <div class="ai-hint" id="aiHint">Ex.: "Amanhã às 14h preciso gravar três vídeos"</div>
       </section>
 
-      <!-- Metas da semana -->
-      <section class="card">
-        <div class="card-head">
-          <h2>Metas da semana</h2>
-          <button class="icon-btn" id="addGoalBtn" type="button" aria-label="Adicionar meta">+</button>
+      <!-- Sugestão proativa (no máx. 1) -->
+      <section id="suggestionSlot"></section>
+
+      <!-- Seu dia (tarefas com horário) -->
+      <section class="day-section">
+        <div class="section-head">
+          <h2>Seu dia</h2>
+          <button class="organize-btn" id="organizeDay" type="button">Organizar meu dia</button>
         </div>
-        <ul class="goal-list" id="goalList"></ul>
-        <p class="empty-hint" id="goalsEmpty">Nenhuma meta ainda. Toque em + para criar.</p>
+        <div class="timed-list" id="timedList"></div>
+        <p class="section-empty hidden" id="timedEmpty">Nada com horário marcado.</p>
       </section>
 
-      <!-- Checklist do dia -->
-      <section class="checklist" id="checklist">
-        <!-- blocos manhã/tarde/noite injetados via JS -->
+      <!-- Para fazer hoje (sem horário) -->
+      <section class="todo-section hidden" id="untimedSection">
+        <h2>Para fazer hoje</h2>
+        <div class="todo-card" id="untimedList"></div>
       </section>
 
-      <div class="day-progress" id="dayProgress">
-        <div class="day-progress-bar"><span id="dayProgressFill"></span></div>
-        <span id="dayProgressLabel">0%</span>
-      </div>
+      <!-- Resumo do dia -->
+      <section id="daySummarySlot"></section>
     </main>
 
-    <!-- ================= VIEW: ESTATÍSTICAS ================= -->
-    <main class="view hidden" id="view-stats">
-      <section class="card">
-        <div class="card-head"><h2>Esta semana</h2></div>
-        <div class="week-summary" id="weekSummary"></div>
-        <div class="weekbars" id="weekBars"></div>
-      </section>
-
-      <section class="card">
-        <div class="card-head"><h2>Resumo semanal</h2></div>
-        <div id="summaryContent" class="summary-content"></div>
-      </section>
-
-      <section class="card">
-        <div class="card-head"><h2>Últimos 30 dias</h2></div>
-        <div class="history-30" id="history30"></div>
-        <div class="hist-legend">
-          <span><i class="dot dot-full"></i> 100%</span>
-          <span><i class="dot dot-part"></i> parcial</span>
-          <span><i class="dot dot-none"></i> nada / vazio</span>
+    <!-- ============================================================= -->
+    <!-- SCREEN: SEMANA                                                 -->
+    <!-- ============================================================= -->
+    <main class="screen hidden" id="screen-semana">
+      <header class="scr-head">
+        <div class="scr-head-text">
+          <h1>Semana</h1>
+          <p class="scr-sub" id="semanaSub">—</p>
         </div>
+        <button class="gear-btn" data-open-ajustes type="button" aria-label="Ajustes">
+          <svg viewBox="0 0 24 24" width="19" height="19" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.7"/>
+            <path d="M12 2.5v2M12 19.5v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2.5 12h2M19.5 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </header>
+
+      <div class="week-list" id="weekList"></div>
+
+      <!-- Metas da semana (discreto) -->
+      <section class="goals-section">
+        <div class="section-head">
+          <h2>Metas da semana</h2>
+          <button class="add-mini" id="addGoalBtn" type="button" aria-label="Adicionar meta">+</button>
+        </div>
+        <ul class="goal-list" id="goalList"></ul>
+        <p class="section-empty" id="goalsEmpty">Nenhuma meta ainda. Toque em + para criar.</p>
       </section>
 
-      <section class="card">
-        <div class="card-head"><h2>Sequência (streak)</h2></div>
-        <div class="streak-stats" id="streakStats"></div>
-        <ul class="break-history" id="breakHistory"></ul>
-      </section>
-
-      <section class="card">
-        <div class="card-head"><h2>Ferramentas da semana</h2></div>
-        <p class="note" style="margin-top:0">Copie a estrutura das tarefas (sem as marcações de concluído).</p>
-        <div class="diag-actions">
+      <!-- Ferramentas da semana -->
+      <section class="tools-section">
+        <div class="section-head"><h2>Ferramentas</h2></div>
+        <div class="tool-row">
           <button class="btn-ghost" id="copyPrevWeek" type="button">Trazer semana passada</button>
           <button class="btn-ghost" id="copyNextWeek" type="button">Copiar p/ próxima</button>
         </div>
@@ -128,8 +121,62 @@
       </section>
     </main>
 
-    <!-- ================= VIEW: AJUSTES ================= -->
-    <main class="view hidden" id="view-ajustes">
+    <!-- ============================================================= -->
+    <!-- SCREEN: PROGRESSO                                              -->
+    <!-- ============================================================= -->
+    <main class="screen hidden" id="screen-progresso">
+      <header class="scr-head">
+        <div class="scr-head-text"><h1>Progresso</h1></div>
+        <button class="gear-btn" data-open-ajustes type="button" aria-label="Ajustes">
+          <svg viewBox="0 0 24 24" width="19" height="19" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.7"/>
+            <path d="M12 2.5v2M12 19.5v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2.5 12h2M19.5 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </header>
+
+      <div class="ring-wrap">
+        <div class="big-ring" id="weekRing">
+          <div class="big-ring-hole">
+            <div class="big-ring-pct" id="weekRingPct">0%</div>
+            <div class="big-ring-cap">desta semana</div>
+          </div>
+        </div>
+        <p class="ring-caption" id="weekTasksCaption">—</p>
+      </div>
+
+      <div class="stat-tiles" id="statTiles"></div>
+
+      <section class="hist-section">
+        <h2>Últimos 30 dias</h2>
+        <div class="history-30" id="history30"></div>
+        <div class="hist-legend">
+          <span>menos</span>
+          <i class="lg lg0"></i><i class="lg lg1"></i><i class="lg lg2"></i><i class="lg lg3"></i>
+          <span>mais</span>
+        </div>
+      </section>
+
+      <section class="hist-section" id="breakSection">
+        <h2>Sequência</h2>
+        <ul class="break-history" id="breakHistory"></ul>
+      </section>
+    </main>
+
+    <!-- ============================================================= -->
+    <!-- SCREEN: AJUSTES                                                -->
+    <!-- ============================================================= -->
+    <main class="screen hidden" id="screen-ajustes">
+      <header class="scr-head">
+        <button class="back-btn" id="ajustesBack" type="button" aria-label="Voltar">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden="true">
+            <path d="M15 5l-7 7 7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <div class="scr-head-text"><h1>Ajustes</h1></div>
+        <span class="gear-spacer"></span>
+      </header>
+
       <section class="card">
         <div class="card-head"><h2>Notificações</h2></div>
         <div class="setting-row">
@@ -148,6 +195,15 @@
       </section>
 
       <section class="card">
+        <div class="card-head"><h2>Uso da IA</h2></div>
+        <div class="ai-usage">
+          <div class="ai-usage-num" id="aiUsageCount">0</div>
+          <div class="ai-usage-lbl" id="aiUsageLbl">chamadas este mês</div>
+        </div>
+        <p class="note">Contagem local das interações com a IA feitas neste aparelho (criar por texto, organizar o dia). Reinicia a cada mês.</p>
+      </section>
+
+      <section class="card">
         <div class="card-head"><h2>Sequência</h2></div>
         <div class="setting-row">
           <label for="streakGoalInput">Meta de dias seguidos</label>
@@ -158,11 +214,11 @@
       <section class="card">
         <div class="card-head">
           <h2>Rotina fixa</h2>
-          <button class="icon-btn" id="addRoutineBtn" type="button" aria-label="Nova rotina">+</button>
+          <button class="add-mini" id="addRoutineBtn" type="button" aria-label="Nova rotina">+</button>
         </div>
         <p class="note" style="margin-top:0">Tarefas que se repetem toda semana. Aparecem sozinhas nos dias escolhidos.</p>
         <ul class="routine-list" id="routineList"></ul>
-        <p class="empty-hint" id="routinesEmpty">Nenhuma rotina. Toque em + ou marque "repetir toda semana" ao criar uma tarefa.</p>
+        <p class="section-empty" id="routinesEmpty">Nenhuma rotina. Toque em + ou marque "repetir toda semana" ao criar uma tarefa.</p>
       </section>
 
       <section class="card">
@@ -183,18 +239,37 @@
       </section>
     </main>
 
-    <!-- ================= BOTTOM NAV ================= -->
+    <!-- ============================================================= -->
+    <!-- BOTTOM NAV                                                     -->
+    <!-- ============================================================= -->
     <nav class="bottom-nav" aria-label="Navegação principal">
       <button class="nav-btn active" data-view="hoje" type="button">
-        <span class="nav-ico">▤</span><span>Hoje</span>
+        <svg class="nav-ico" viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/>
+          <path d="M12 7v5l3 2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span>Hoje</span>
       </button>
-      <button class="nav-btn" data-view="stats" type="button">
-        <span class="nav-ico">▦</span><span>Stats</span>
+      <button class="nav-btn" data-view="semana" type="button">
+        <svg class="nav-ico" viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden="true">
+          <rect x="3.5" y="5" width="17" height="15" rx="2.5" stroke="currentColor" stroke-width="1.8"/>
+          <path d="M3.5 9.5h17M8 3.5v3M16 3.5v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+        <span>Semana</span>
       </button>
-      <button class="nav-btn" data-view="ajustes" type="button">
-        <span class="nav-ico">◇</span><span>Ajustes</span>
+      <button class="nav-btn" data-view="progresso" type="button">
+        <svg class="nav-ico" viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden="true">
+          <path d="M4 20V10M12 20V4M20 20v-7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <span>Progresso</span>
       </button>
     </nav>
+
+    <!-- Snackbar (Desfazer) -->
+    <div class="snackbar hidden" id="snackbar">
+      <span id="snackbarText"></span>
+      <button id="snackbarAction" type="button">Desfazer</button>
+    </div>
   </div>
 
   <!-- ================= MODAL: ITEM ================= -->
@@ -316,7 +391,23 @@
     </div>
   </div>
 
+  <!-- ================= MODAL: ORGANIZAR MEU DIA ================= -->
+  <div class="modal-overlay hidden" id="organizeModal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="organizeTitle">
+      <h3 id="organizeTitle">Organizar meu dia</h3>
+      <p class="note" id="organizeIntro">A IA propôs estes ajustes. Nada muda até você aprovar.</p>
+      <div class="organize-list" id="organizeList"></div>
+      <div class="modal-actions">
+        <button class="btn-ghost" id="organizeCancel" type="button">Manter como está</button>
+        <button class="btn-primary" id="organizeApply" type="button">Aplicar</button>
+      </div>
+    </div>
+  </div>
+
   <div class="toast hidden" id="toast"></div>
+  <div class="listening hidden" id="listening">
+    <span class="listening-dot"></span> Estou ouvindo…
+  </div>
 
   <script src="./config.js"></script>
   <script src="./phrases.js"></script>
