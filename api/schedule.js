@@ -66,6 +66,8 @@ export default async function handler(req, res) {
     try { await qstash.messages.delete(id); } catch (e) { /* já entregue/expirada */ }
   }
 
+  const errors = [];
+
   // 2) lembrete diário (cron em UTC)
   let dailyScheduleId = null;
   if (dailyCron && dailyNotification) {
@@ -77,7 +79,10 @@ export default async function handler(req, res) {
         headers: { 'Content-Type': 'application/json' },
       });
       dailyScheduleId = r.scheduleId;
-    } catch (e) { console.error('daily schedule', e && e.message); }
+    } catch (e) {
+      console.error('daily schedule', e && e.message);
+      errors.push({ where: 'daily', name: e && e.name, message: (e && e.message) || String(e) });
+    }
   }
 
   // 3) por tarefa (mensagem única, entregue no horário calculado)
@@ -92,8 +97,11 @@ export default async function handler(req, res) {
       });
       const id = Array.isArray(r) ? r[0]?.messageId : r?.messageId;
       if (id) messageIds.push({ key: t.key, id });
-    } catch (e) { console.error('task publish', t.key, e && e.message); }
+    } catch (e) {
+      console.error('task publish', t.key, e && e.message);
+      errors.push({ where: 'task', key: t.key, message: (e && e.message) || String(e) });
+    }
   }
 
-  return res.status(200).json({ ok: true, dailyScheduleId, messageIds, count: messageIds.length });
+  return res.status(200).json({ ok: true, dailyScheduleId, messageIds, count: messageIds.length, errors });
 }
