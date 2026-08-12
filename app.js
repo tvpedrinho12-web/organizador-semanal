@@ -795,6 +795,10 @@
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js').catch(console.error);
       navigator.serviceWorker.addEventListener('message', (ev) => {
+        if (ev.data && ev.data.type === 'reload') {
+          if (!window.__reloadedBySW) { window.__reloadedBySW = true; location.reload(); }
+          return;
+        }
         if (ev.data && ev.data.type === 'item-done') {
           const { date, itemId } = ev.data;
           const d = state.days[date];

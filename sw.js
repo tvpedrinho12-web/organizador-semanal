@@ -1,5 +1,5 @@
 /* sw.js — cache offline + ação de notificação "Concluir" + recebimento de push */
-const CACHE = 'organizador-v2';
+const CACHE = 'organizador-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -20,48 +20,33 @@ self.addEventListener('install', (e) => {
 
 self.addEventListener('activate', (e) => {
   e.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
-    ).then(() => self.clients.claim())
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then(() => self.clients.claim())
+      .then(async () => {
+        // avisa as abas abertas para recarregarem e pegarem o código novo de forma atômica
+        const list = await self.clients.matchAll({ includeUncontrolled: true, type: 'window' });
+        list.forEach((c) => c.postMessage({ type: 'reload' }));
+      })
   );
 });
 
-// Estratégia:
-//  - navegação/HTML: network-first (garante que atualizações chegam), cai pro cache offline.
-//  - demais assets locais: stale-while-revalidate (rápido e se atualiza sozinho).
+// Estratégia: network-first para TODO recurso da própria origem (HTML e JS/CSS ficam sempre
+// consistentes entre si). Cai pro cache só quando offline. Evita o mismatch "HTML novo + JS velho".
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
 
-  const isHTML = req.mode === 'navigate' ||
-    (req.headers.get('accept') || '').includes('text/html');
-
-  if (isHTML) {
-    e.respondWith(
-      fetch(req)
-        .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
-          return res;
-        })
-        .catch(() => caches.match(req).then((c) => c || caches.match('./index.html')))
-    );
-    return;
-  }
-
   e.respondWith(
-    caches.match(req).then((cached) => {
-      const network = fetch(req)
-        .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
-          return res;
-        })
-        .catch(() => cached);
-      return cached || network;
-    })
+    fetch(req)
+      .then((res) => {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+        return res;
+      })
+      .catch(() => caches.match(req).then((c) => c || caches.match('./index.html')))
   );
 });
 
