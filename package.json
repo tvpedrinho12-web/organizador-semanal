@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Backend de Web Push do Organizador Semanal (Vercel Functions + Upstash QStash)",
   "dependencies": {
-    "@upstash/qstash": "^2.7.17",
+    "@upstash/qstash": "^2.11.3",
     "web-push": "^3.6.7"
   }
 }
