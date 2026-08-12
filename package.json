@@ -1,0 +1,11 @@
+{
+  "name": "organizador-semanal",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Backend de Web Push do Organizador Semanal (Vercel Functions + Upstash QStash)",
+  "dependencies": {
+    "@upstash/qstash": "^2.7.17",
+    "web-push": "^3.6.7"
+  }
+}

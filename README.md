@@ -38,12 +38,18 @@ Abra `http://localhost:5178`.
 2. Compartilhar → **Adicionar à Tela de Início**.
 3. Abra pelo ícone (modo standalone) e, em Ajustes do app, toque em **Ativar** notificações.
 
-### Limitação de notificações no iOS (importante)
+### Notificações no iOS
 
-No iPhone, Web Push só funciona com o **PWA instalado na tela inicial** (iOS 16.4+) **e** com um **servidor** enviando o push. Esta versão é 100% local, então:
+No iPhone, Web Push só funciona com o **PWA instalado na tela inicial** (iOS 16.4+) **e** com um **servidor** enviando o push.
 
-- As notificações são agendadas **enquanto o app está aberto/recente**. Com o app fechado por muito tempo, o iOS **pode não entregar**.
-- Para lembretes confiáveis com o app fechado (diário às 8h e "10 min antes da tarefa"), é preciso um **mini-backend grátis** (Vercel serverless + agendador tipo QStash + chaves VAPID). O `sw.js` já tem o handler de `push` pronto para essa fase.
+- **Fase 1 (local):** sem backend, as notificações só disparam com o app aberto/recente.
+- **Fase 2 (push real):** implementada — backend grátis em **Vercel Functions + Upstash QStash + VAPID**
+  (`api/send.js`, `api/schedule.js`, `push.js`, `config.js`). Dispara o lembrete diário e os avisos por
+  tarefa **mesmo com o app fechado**, com botão **Concluir** na notificação. O app cai no modo local
+  automaticamente se o backend não estiver configurado.
+- Passo a passo de deploy e teste no iPhone: veja **[DEPLOY.md](DEPLOY.md)**.
+
+Segredos (chave VAPID privada, token QStash) ficam em `.env` (fora do git) e nas Environment Variables do Vercel.
 
 ## Estrutura
 

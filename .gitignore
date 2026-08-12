@@ -8,3 +8,9 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Node / Vercel
+node_modules/
+.vercel/
+.env
+.env*.local

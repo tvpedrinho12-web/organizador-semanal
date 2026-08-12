@@ -91,6 +91,60 @@
   function save() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => { DB.setState(state).catch(console.error); }, 120);
+    syncPush();
+  }
+
+  // ---------- Integração com o backend de push ----------
+  function utcCronFromLocal(hhmm) {
+    const [h, m] = hhmm.split(':').map(Number);
+    const off = new Date().getTimezoneOffset(); // minutos; UTC = local + off
+    let total = h * 60 + m + off;
+    total = ((total % 1440) + 1440) % 1440;
+    return `${total % 60} ${Math.floor(total / 60)} * * *`;
+  }
+  function buildReminderPlan() {
+    const s = state.settings;
+    const plan = { dailyCron: null, dailyNotification: null, tasks: [] };
+    if (s.dailyReminder) {
+      plan.dailyCron = utcCronFromLocal(s.dailyReminder);
+      plan.dailyNotification = { title: 'Bom dia! ☀️', body: 'Hora de organizar o seu dia.', tag: 'daily' };
+    }
+    const now = Date.now();
+    // agenda hoje + amanhã (o QStash guarda; dispara mesmo com o app fechado)
+    [todayISO(), addDays(todayISO(), 1)].forEach((iso) => {
+      allItems(iso).forEach((it) => {
+        if (!it.time || it.done) return;
+        const [h, m] = it.time.split(':').map(Number);
+        const rem = (it.reminder != null ? it.reminder : s.defaultReminder) || 0;
+        const d = fromISO(iso); d.setHours(h, m, 0, 0);
+        const fireAt = d.getTime() - rem * 60000;
+        if (fireAt > now + 15000) {
+          plan.tasks.push({
+            key: iso + '|' + it.id,
+            notBeforeUnix: Math.floor(fireAt / 1000),
+            notification: {
+              title: it.text,
+              body: rem ? `Em ${rem} min (${it.time})` : `Agora (${it.time})`,
+              tag: 'task-' + it.id,
+              data: { itemId: it.id, date: iso },
+              actions: [{ action: 'done', title: 'Concluir' }],
+            },
+          });
+        }
+      });
+    });
+    return plan;
+  }
+  function syncPush() {
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    if (window.PushClient && window.PushClient.supported()) {
+      window.PushClient.scheduleSync(buildReminderPlan());
+    }
+  }
+  async function enablePush() {
+    if (!(window.PushClient && window.PushClient.supported())) return;
+    try { await window.PushClient.syncNow(buildReminderPlan()); }
+    catch (e) { console.warn('push indisponível — usando fallback local:', e.message); }
   }
 
   // ---------- Streak ----------
@@ -300,6 +354,7 @@
 
   function scheduleNotifications() {
     clearTimers();
+    if (window.__pushActive) return; // o push do servidor assumiu os lembretes
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
 
     // lembrete diário
@@ -655,6 +710,7 @@
         render();
         if (wasDate !== todayISO() && relLabel(wasDate) === '') { /* mantém seleção */ }
         checkBreak();
+        syncPush();
         scheduleNotifications();
       }
     });
@@ -671,7 +727,11 @@
     try {
       const p = await Notification.requestPermission();
       updateNotifButton();
-      if (p === 'granted') { scheduleNotifications(); toast('Notificações ativadas'); }
+      if (p === 'granted') {
+        await enablePush();
+        scheduleNotifications();
+        toast(window.__pushActive ? 'Notificações ativadas (push)' : 'Notificações ativadas');
+      }
     } catch (e) { console.error(e); }
   }
 
@@ -719,6 +779,7 @@
     render();
     switchView('hoje');
     checkBreak();
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') { await enablePush(); }
     scheduleNotifications();
   }
 

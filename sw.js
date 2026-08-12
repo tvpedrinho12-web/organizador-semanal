@@ -1,11 +1,13 @@
-/* sw.js — cache offline + ação de notificação "Concluir" */
-const CACHE = 'organizador-v1';
+/* sw.js — cache offline + ação de notificação "Concluir" + recebimento de push */
+const CACHE = 'organizador-v2';
 const ASSETS = [
   './',
   './index.html',
   './styles.css',
-  './app.js',
+  './config.js',
+  './push.js',
   './db.js',
+  './app.js',
   './manifest.webmanifest',
   './icons/icon-192.png',
   './icons/icon-512.png',
@@ -24,22 +26,41 @@ self.addEventListener('activate', (e) => {
   );
 });
 
-// cache-first p/ assets locais; rede p/ o resto
+// Estratégia:
+//  - navegação/HTML: network-first (garante que atualizações chegam), cai pro cache offline.
+//  - demais assets locais: stale-while-revalidate (rápido e se atualiza sozinho).
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
-  e.respondWith(
-    caches.match(req).then((cached) => {
-      if (cached) return cached;
-      return fetch(req)
+
+  const isHTML = req.mode === 'navigate' ||
+    (req.headers.get('accept') || '').includes('text/html');
+
+  if (isHTML) {
+    e.respondWith(
+      fetch(req)
         .then((res) => {
           const copy = res.clone();
           caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
           return res;
         })
-        .catch(() => caches.match('./index.html'));
+        .catch(() => caches.match(req).then((c) => c || caches.match('./index.html')))
+    );
+    return;
+  }
+
+  e.respondWith(
+    caches.match(req).then((cached) => {
+      const network = fetch(req)
+        .then((res) => {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+          return res;
+        })
+        .catch(() => cached);
+      return cached || network;
     })
   );
 });
@@ -77,7 +98,6 @@ async function markDone(date, itemId) {
     if (it) { it.done = true; changed = true; break; }
   }
   if (changed) await idbPut(db, state);
-  // avisa qualquer aba aberta
   const clientsList = await self.clients.matchAll({ includeUncontrolled: true, type: 'window' });
   clientsList.forEach((c) => c.postMessage({ type: 'item-done', date, itemId }));
 }
@@ -89,7 +109,6 @@ self.addEventListener('notificationclick', (e) => {
     e.waitUntil(markDone(n.data.date, n.data.itemId));
     return;
   }
-  // abrir/focar o app
   e.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
       for (const c of list) { if ('focus' in c) return c.focus(); }
@@ -98,7 +117,7 @@ self.addEventListener('notificationclick', (e) => {
   );
 });
 
-// gancho p/ futuro push real (fase backend)
+// push real (fase backend): payload = { title, body, tag, data, actions }
 self.addEventListener('push', (e) => {
   let data = {};
   try { data = e.data ? e.data.json() : {}; } catch (err) { data = { title: 'Lembrete', body: e.data ? e.data.text() : '' }; }
@@ -110,6 +129,7 @@ self.addEventListener('push', (e) => {
     icon: './icons/icon-192.png',
     badge: './icons/icon-192.png',
     actions: data.actions || [],
+    renotify: !!data.tag,
   };
   e.waitUntil(self.registration.showNotification(title, opts));
 });
