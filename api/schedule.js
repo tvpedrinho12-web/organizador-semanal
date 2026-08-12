@@ -55,7 +55,7 @@ export default async function handler(req, res) {
   const secret = process.env.SEND_SECRET;
   if (!token || !secret) return res.status(500).json({ error: 'server-not-configured', missing: { QSTASH_TOKEN: !token, SEND_SECRET: !secret } });
 
-  const qstash = new Client({ token });
+  const qstash = new Client({ token, baseUrl: process.env.QSTASH_URL || undefined });
   const dest = `${baseUrl(req)}/api/send?key=${encodeURIComponent(secret)}`;
 
   // 1) limpa o agendamento anterior (idempotência) — best-effort
