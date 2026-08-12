@@ -517,6 +517,25 @@
     $('#defaultReminder').value = state.settings.defaultReminder;
     $('#streakGoalInput').value = state.settings.streakGoal;
     updateNotifButton();
+    refreshDiag();
+  }
+
+  async function refreshDiag() {
+    const el = $('#pushDiag');
+    if (!el) return;
+    if (!(window.PushClient && window.PushClient.supported())) { el.textContent = 'Push não suportado neste navegador.'; return; }
+    el.textContent = 'carregando…';
+    try {
+      const i = await window.PushClient.info();
+      el.textContent =
+        `origem:        ${i.origin}\n` +
+        `apiBase:       ${i.apiBase}\n` +
+        `backend ok:    ${i.backendReachable ? 'sim' : 'NÃO (app sem push aqui)'}\n` +
+        `permissão:     ${i.permission}\n` +
+        `inscrição:     ${i.hasSubscription ? 'sim' : 'NÃO'}${i.endpointHost ? ' (' + i.endpointHost + ')' : ''}\n` +
+        `agend. diário: ${i.dailyScheduleId ? 'sim' : 'não'}\n` +
+        `tarefas agend: ${i.taskMessages}`;
+    } catch (e) { el.textContent = 'erro: ' + e.message; }
   }
   function updateNotifButton() {
     const btn = $('#notifToggle');
@@ -702,6 +721,33 @@
     $('#defaultReminder').onchange = (e) => { state.settings.defaultReminder = clampInt(e.target.value, 0, 120, 10); e.target.value = state.settings.defaultReminder; save(); };
     $('#streakGoalInput').onchange = (e) => { state.settings.streakGoal = clampInt(e.target.value, 1, 365, 30); e.target.value = state.settings.streakGoal; save(); renderHeader(); };
     $('#resetBtn').onclick = resetAll;
+
+    // diagnóstico push
+    $('#diagRefresh').onclick = refreshDiag;
+    $('#diagResync').onclick = async () => {
+      $('#diagResult').textContent = 'reagendando…';
+      try {
+        if (typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
+          const p = await Notification.requestPermission();
+          if (p !== 'granted') { $('#diagResult').textContent = 'Permissão não concedida.'; return; }
+        }
+        const data = await window.PushClient.syncNow(buildReminderPlan());
+        $('#diagResult').textContent = 'Reagendado: ' + JSON.stringify(data);
+      } catch (e) { $('#diagResult').textContent = 'Falhou: ' + e.message; }
+      refreshDiag();
+    };
+    $('#diagTest').onclick = async () => {
+      $('#diagResult').textContent = 'enviando teste…';
+      try {
+        if (typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
+          const p = await Notification.requestPermission();
+          if (p !== 'granted') { $('#diagResult').textContent = 'Permissão não concedida.'; return; }
+        }
+        const r = await window.PushClient.testPush();
+        $('#diagResult').textContent = 'Resposta do /api/schedule (teste): ' + JSON.stringify(r);
+      } catch (e) { $('#diagResult').textContent = 'Falhou: ' + e.message; }
+      refreshDiag();
+    };
 
     // rollover: revalida ao voltar pro app
     document.addEventListener('visibilitychange', () => {

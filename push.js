@@ -76,5 +76,32 @@
     } catch { return false; }
   }
 
-  global.PushClient = { supported, getSubscription, scheduleSync, syncNow, doSync, probe, getIds };
+  // ---- Diagnóstico ----
+  async function info() {
+    const out = { origin: location.origin, apiBase: base() || '(mesma origem)', supported: supported(), permission: (typeof Notification !== 'undefined' ? Notification.permission : 'n/a') };
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      const sub = reg ? await reg.pushManager.getSubscription() : null;
+      out.hasSubscription = !!sub;
+      out.endpointHost = sub ? new URL(sub.toJSON().endpoint).host : null;
+    } catch (e) { out.subError = String(e); }
+    const ids = getIds();
+    out.dailyScheduleId = ids.dailyScheduleId || null;
+    out.taskMessages = (ids.messageIds || []).length;
+    out.backendReachable = await probe();
+    return out;
+  }
+  // Envia um push imediato pelo servidor, SEM passar pelo QStash.
+  async function testPush() {
+    const sub = await getSubscription();
+    const res = await fetch(base() + '/api/schedule', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subscription: sub.toJSON(), testNow: true }),
+    });
+    let data = null; try { data = await res.json(); } catch {}
+    return { httpStatus: res.status, ...data };
+  }
+
+  global.PushClient = { supported, getSubscription, scheduleSync, syncNow, doSync, probe, getIds, info, testPush };
 })(window);

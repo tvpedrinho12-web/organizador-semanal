@@ -126,6 +126,17 @@
       </section>
 
       <section class="card">
+        <div class="card-head"><h2>Diagnóstico (push)</h2></div>
+        <pre id="pushDiag" class="diag">—</pre>
+        <div class="diag-actions">
+          <button class="btn-ghost" id="diagRefresh" type="button">Atualizar</button>
+          <button class="btn-ghost" id="diagResync" type="button">Reagendar</button>
+          <button class="btn-primary" id="diagTest" type="button">Enviar push de teste</button>
+        </div>
+        <p class="note" id="diagResult"></p>
+      </section>
+
+      <section class="card">
         <div class="card-head"><h2>Sobre</h2></div>
         <p class="note">Todos os dados ficam só neste aparelho (nada de login, servidor ou sincronização). Se você limpar os dados do navegador, o histórico é perdido.</p>
         <button class="btn-danger" id="resetBtn" type="button">Apagar tudo</button>
