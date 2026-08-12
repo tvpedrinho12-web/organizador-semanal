@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <title>Organizador Semanal</title>
+  <meta name="description" content="Organização semanal: metas, checklist do dia, streak e estatísticas. 100% offline." />
+
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <meta name="theme-color" content="#0B0B0D" />
+
+  <!-- iOS PWA -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Semana" />
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- ================= HEADER ================= -->
+    <header class="app-header">
+      <div class="header-top">
+        <div class="header-title">
+          <h1 id="viewDate">—</h1>
+          <span id="viewRel" class="header-sub">—</span>
+        </div>
+        <button id="streakChip" class="streak-chip" type="button" aria-label="Sequência">
+          <span class="streak-flame">◆</span>
+          <span id="streakCount">0</span><span class="streak-goal" id="streakGoal">/30</span>
+        </button>
+      </div>
+
+      <!-- Abas dos 7 dias -->
+      <nav class="day-tabs" id="dayTabs" aria-label="Dias da semana"></nav>
+    </header>
+
+    <!-- ================= VIEW: HOJE ================= -->
+    <main class="view" id="view-hoje">
+      <div id="sundayBanner" class="banner hidden">
+        <div>
+          <strong>Resumo da semana</strong>
+          <p>É domingo — veja o que você cumpriu.</p>
+        </div>
+        <button class="btn-ghost" id="openSummaryFromBanner" type="button">Ver</button>
+      </div>
+
+      <!-- Metas da semana -->
+      <section class="card">
+        <div class="card-head">
+          <h2>Metas da semana</h2>
+          <button class="icon-btn" id="addGoalBtn" type="button" aria-label="Adicionar meta">+</button>
+        </div>
+        <ul class="goal-list" id="goalList"></ul>
+        <p class="empty-hint" id="goalsEmpty">Nenhuma meta ainda. Toque em + para criar.</p>
+      </section>
+
+      <!-- Checklist do dia -->
+      <section class="checklist" id="checklist">
+        <!-- blocos manhã/tarde/noite injetados via JS -->
+      </section>
+
+      <div class="day-progress" id="dayProgress">
+        <div class="day-progress-bar"><span id="dayProgressFill"></span></div>
+        <span id="dayProgressLabel">0%</span>
+      </div>
+    </main>
+
+    <!-- ================= VIEW: ESTATÍSTICAS ================= -->
+    <main class="view hidden" id="view-stats">
+      <section class="card">
+        <div class="card-head"><h2>Esta semana</h2></div>
+        <div class="week-summary" id="weekSummary"></div>
+        <div class="weekbars" id="weekBars"></div>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><h2>Resumo semanal</h2></div>
+        <div id="summaryContent" class="summary-content"></div>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><h2>Últimos 30 dias</h2></div>
+        <div class="history-30" id="history30"></div>
+        <div class="hist-legend">
+          <span><i class="dot dot-full"></i> 100%</span>
+          <span><i class="dot dot-part"></i> parcial</span>
+          <span><i class="dot dot-none"></i> nada / vazio</span>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><h2>Sequência (streak)</h2></div>
+        <div class="streak-stats" id="streakStats"></div>
+        <ul class="break-history" id="breakHistory"></ul>
+      </section>
+    </main>
+
+    <!-- ================= VIEW: AJUSTES ================= -->
+    <main class="view hidden" id="view-ajustes">
+      <section class="card">
+        <div class="card-head"><h2>Notificações</h2></div>
+        <div class="setting-row">
+          <label for="notifToggle">Permitir notificações</label>
+          <button id="notifToggle" class="btn-ghost" type="button">Ativar</button>
+        </div>
+        <div class="setting-row">
+          <label for="dailyReminder">Lembrete diário</label>
+          <input type="time" id="dailyReminder" value="08:00" />
+        </div>
+        <div class="setting-row">
+          <label for="defaultReminder">Avisar antes das tarefas (min)</label>
+          <input type="number" id="defaultReminder" min="0" max="120" value="10" />
+        </div>
+        <p class="note" id="notifNote"></p>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><h2>Sequência</h2></div>
+        <div class="setting-row">
+          <label for="streakGoalInput">Meta de dias seguidos</label>
+          <input type="number" id="streakGoalInput" min="1" max="365" value="30" />
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><h2>Sobre</h2></div>
+        <p class="note">Todos os dados ficam só neste aparelho (nada de login, servidor ou sincronização). Se você limpar os dados do navegador, o histórico é perdido.</p>
+        <button class="btn-danger" id="resetBtn" type="button">Apagar tudo</button>
+      </section>
+    </main>
+
+    <!-- ================= BOTTOM NAV ================= -->
+    <nav class="bottom-nav" aria-label="Navegação principal">
+      <button class="nav-btn active" data-view="hoje" type="button">
+        <span class="nav-ico">▤</span><span>Hoje</span>
+      </button>
+      <button class="nav-btn" data-view="stats" type="button">
+        <span class="nav-ico">▦</span><span>Stats</span>
+      </button>
+      <button class="nav-btn" data-view="ajustes" type="button">
+        <span class="nav-ico">◇</span><span>Ajustes</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- ================= MODAL: ITEM ================= -->
+  <div class="modal-overlay hidden" id="itemModal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="itemModalTitle">
+      <h3 id="itemModalTitle">Nova tarefa</h3>
+      <label class="field">
+        <span>Tarefa</span>
+        <input type="text" id="itemText" placeholder="Ex: gravar vídeo" autocomplete="off" />
+      </label>
+      <label class="field">
+        <span>Período</span>
+        <select id="itemPeriod">
+          <option value="morning">Manhã</option>
+          <option value="afternoon">Tarde</option>
+          <option value="night">Noite</option>
+        </select>
+      </label>
+      <div class="field-row">
+        <label class="field">
+          <span>Horário (opcional)</span>
+          <input type="time" id="itemTime" />
+        </label>
+        <label class="field">
+          <span>Avisar antes (min)</span>
+          <input type="number" id="itemReminder" min="0" max="120" placeholder="10" />
+        </label>
+      </div>
+      <div class="field" id="dupWrap">
+        <span>Duplicar para outros dias</span>
+        <div class="dup-days" id="dupDays"></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-ghost" id="itemCancel" type="button">Cancelar</button>
+        <button class="btn-primary" id="itemSave" type="button">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= MODAL: META ================= -->
+  <div class="modal-overlay hidden" id="goalModal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="goalModalTitle">
+      <h3 id="goalModalTitle">Nova meta</h3>
+      <label class="field">
+        <span>Meta</span>
+        <input type="text" id="goalText" placeholder="Ex: gravar vídeos" autocomplete="off" />
+      </label>
+      <label class="field">
+        <span>Tipo</span>
+        <select id="goalType">
+          <option value="bool">Simples (feito / não feito)</option>
+          <option value="counter">Contador (ex: 2/5)</option>
+        </select>
+      </label>
+      <label class="field hidden" id="goalTargetWrap">
+        <span>Meta do contador</span>
+        <input type="number" id="goalTarget" min="1" max="999" value="5" />
+      </label>
+      <div class="modal-actions">
+        <button class="btn-ghost" id="goalCancel" type="button">Cancelar</button>
+        <button class="btn-primary" id="goalSave" type="button">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= MODAL: MOTIVO DA QUEBRA ================= -->
+  <div class="modal-overlay hidden" id="breakModal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="breakModalTitle">
+      <h3 id="breakModalTitle">Sequência quebrada</h3>
+      <p class="note" id="breakModalText">Você perdeu um dia. Quer anotar o motivo? (opcional)</p>
+      <label class="field">
+        <input type="text" id="breakReason" placeholder="Ex: viajei / imprevisto" autocomplete="off" />
+      </label>
+      <div class="modal-actions">
+        <button class="btn-ghost" id="breakSkip" type="button">Pular</button>
+        <button class="btn-primary" id="breakSave" type="button">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast hidden" id="toast"></div>
+
+  <script src="./db.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
