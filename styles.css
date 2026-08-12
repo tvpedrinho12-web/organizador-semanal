@@ -169,6 +169,22 @@ ul { list-style: none; margin: 0; padding: 0; }
 }
 .add-item:active { background: var(--surface); }
 
+/* criar por texto (IA) */
+.ai-card { padding: 12px; }
+.ai-row { display: flex; gap: 8px; }
+.ai-row input {
+  flex: 1; padding: 11px 12px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text); font-size: 15px;
+}
+.ai-row input::placeholder { color: var(--muted-2); }
+.ai-row input:focus { outline: none; border-color: var(--accent); }
+.ai-row .btn-primary { flex: none; padding: 11px 18px; }
+.ai-row .btn-primary:disabled { opacity: 0.55; }
+.ai-note { min-height: 0; }
+.ai-note:empty { display: none; }
+.ai-note.err { color: var(--danger); }
+
 /* quick add inline por período */
 .quick-row { display: flex; gap: 8px; margin-top: 8px; }
 .quick-add {

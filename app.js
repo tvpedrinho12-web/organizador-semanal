@@ -991,6 +991,9 @@
     $$('.nav-btn').forEach((b) => b.onclick = () => switchView(b.dataset.view));
     $('#addGoalBtn').onclick = () => openGoalModal(null);
     $('#streakChip').onclick = () => switchView('stats');
+    // criar por texto (IA)
+    $('#aiParse').onclick = aiCreateTask;
+    $('#aiText').addEventListener('keydown', (e) => { if (e.key === 'Enter') aiCreateTask(); });
     $('#openSummaryFromBanner').onclick = () => switchView('stats');
 
     // modais item
@@ -1095,6 +1098,47 @@
     viewDate = todayISO();
     render(); switchView('hoje');
     toast('Tudo apagado');
+  }
+
+  // ---------- Criar tarefa por texto (IA, via /api/parse-task) ----------
+  function apiBase() { return ((window.PUSH_CONFIG && window.PUSH_CONFIG.apiBase) || '').replace(/\/$/, ''); }
+  let aiBusy = false;
+  async function aiCreateTask() {
+    if (aiBusy) return;
+    const input = $('#aiText');
+    const note = $('#aiResult');
+    const btn = $('#aiParse');
+    const text = input.value.trim();
+    note.classList.remove('err');
+    if (!text) { input.focus(); return; }
+    aiBusy = true; btn.disabled = true; note.textContent = 'interpretando…';
+    try {
+      const res = await fetch(apiBase() + '/api/parse-task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, today: todayISO() }),
+      });
+      let data = null;
+      try { data = await res.json(); } catch { /* resposta não-JSON (ex.: 404 do GitHub Pages) */ }
+      if (!data) { note.classList.add('err'); note.textContent = 'IA indisponível aqui (precisa do backend).'; return; }
+      if (!data.ok) { note.classList.add('err'); note.textContent = data.message || 'Não consegui interpretar. Tente reformular.'; return; }
+
+      const t = data.task;
+      const period = PERIODS.some((p) => p.key === t.period) ? t.period : 'morning';
+      const date = /^\d{4}-\d{2}-\d{2}$/.test(t.date) ? t.date : todayISO();
+      dayData(date)[period].push({ id: uid(), text: t.task, time: t.time || null, reminder: null, done: false });
+      input.value = '';
+      note.textContent = '';
+      if (date !== viewDate) viewDate = date; // leva o usuário pro dia certo
+      save(); render(); scheduleNotifications();
+      const when = date === todayISO() ? 'hoje' : (relLabel(date) || fmtLong(date));
+      const perLabel = (PERIODS.find((p) => p.key === period) || {}).label || '';
+      toast(`Criado: ${t.task} — ${when}, ${perLabel.toLowerCase()}${t.time ? ' ' + t.time : ''}`);
+    } catch (e) {
+      note.classList.add('err'); note.textContent = 'Sem conexão com a IA. Tente de novo.';
+    } finally {
+      aiBusy = false; btn.disabled = false;
+    }
   }
 
   // ---------- Service worker ----------
