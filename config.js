@@ -9,3 +9,10 @@ window.PUSH_CONFIG = {
   //    coloque aqui, ex.: 'https://organizador-semanal.vercel.app'
   apiBase: ''
 };
+
+// Supabase — configuração PÚBLICA do cliente (URL + chave publishable).
+// A chave secreta (sb_secret_...) fica SÓ no Vercel, nunca aqui.
+window.SUPABASE_CONFIG = {
+  url: 'https://bbcyzuvuqsftkoqcfeka.supabase.co',
+  anonKey: 'sb_publishable_wCPbELiX1QRXwOZt1QaJwQ_PxUYXSuT'
+};

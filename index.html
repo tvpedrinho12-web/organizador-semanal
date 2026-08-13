@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
-  <title>Ritimo</title>
-  <meta name="description" content="Ritimo — assistente pessoal de organização e finanças por voz e texto. 100% offline." />
+  <title>Ritmo</title>
+  <meta name="description" content="Ritmo — assistente pessoal de organização e finanças por voz e texto." />
 
   <link rel="manifest" href="./manifest.webmanifest" />
   <meta name="theme-color" content="#0a0a0d" />
@@ -17,10 +17,22 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="Ritimo" />
+  <meta name="apple-mobile-web-app-title" content="Ritmo" />
   <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
 
   <link rel="stylesheet" href="./styles.css" />
+
+  <!-- Ritmo Fase 3: autenticação + guard (config.js carrega no rodapé, antes destes defer) -->
+  <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script defer src="./supabase.js"></script>
+  <style id="ritmo-gate">#app{visibility:hidden}</style>
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      function reveal(){ var g = document.getElementById('ritmo-gate'); if (g) g.remove(); }
+      if (!window.RitmoGuard) { reveal(); return; }        // offline / lib indisponível: não trava o app
+      window.RitmoGuard().then(function (p) { if (p) reveal(); });
+    });
+  </script>
 </head>
 <body>
   <div id="app">

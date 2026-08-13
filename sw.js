@@ -1,10 +1,12 @@
 /* sw.js — cache offline + ação de notificação "Concluir" + recebimento de push */
-const CACHE = 'organizador-v9';
+const CACHE = 'ritmo-v10';
 const ASSETS = [
   './',
   './index.html',
+  './login.html',
   './styles.css',
   './config.js',
+  './supabase.js',
   './phrases.js',
   './push.js',
   './db.js',
@@ -112,7 +114,7 @@ self.addEventListener('notificationclick', (e) => {
 self.addEventListener('push', (e) => {
   let data = {};
   try { data = e.data ? e.data.json() : {}; } catch (err) { data = { title: 'Lembrete', body: e.data ? e.data.text() : '' }; }
-  const title = data.title || 'Ritimo';
+  const title = data.title || 'Ritmo';
   const opts = {
     body: data.body || '',
     tag: data.tag || 'push',
