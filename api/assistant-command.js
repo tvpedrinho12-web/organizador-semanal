@@ -8,8 +8,8 @@ const MODEL = 'claude-haiku-4-5';
 const WEEKDAYS = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
 const PERIODS = ['morning', 'afternoon', 'night'];
 const INTENTS = [
-  'create_task', 'move_task', 'delete_task', 'create_goal', 'query_today', 'query_tomorrow', 'organize_day',
-  'create_expense', 'create_income', 'create_bill', 'create_finance_goal', 'query_finance_summary',
+  'create_task', 'complete_task', 'move_task', 'delete_task', 'create_goal', 'query_today', 'query_tomorrow', 'organize_day',
+  'create_expense', 'create_income', 'create_bill', 'mark_bill_paid', 'create_finance_goal', 'query_finance_summary',
   'change_theme_color', 'toggle_setting', 'unknown',
 ];
 const SETTINGS = ['voice', 'suggestions', 'short_answers', 'bill_reminders', 'finance_hoje'];
@@ -68,12 +68,18 @@ export default async function handler(req, res) {
 
   const system =
 `Você é o assistente de um app pessoal de organização e finanças (em português do Brasil). Interprete a frase do usuário e devolva UMA intenção estruturada. NÃO converse; só classifique e extraia dados.
-Hoje é ${today} (${hojeLabel})${now ? `, agora são ${now}` : ''}. Resolva datas relativas ("hoje", "amanhã", "sexta", "dia 15") para AAAA-MM-DD, sempre hoje ou no futuro.
+Hoje é ${today} (${hojeLabel})${now ? `, agora são ${now}` : ''}. Resolva QUALQUER data relativa para AAAA-MM-DD, sempre hoje ou no futuro (timezone America/Sao_Paulo):
+- "hoje"→${today}; "amanhã"→dia seguinte; "depois de amanhã"→+2.
+- "sexta"/"na sexta"→a próxima sexta a partir de hoje (se hoje já é sexta, use hoje). "sexta que vem"/"próxima sexta"→a sexta da SEMANA seguinte. Idem para os outros dias da semana.
+- "daqui a 3 dias"→+3; "em uma semana"→+7.
+- "dia 15"→o próximo dia 15 (este mês se ainda não passou, senão mês que vem). "dia 10 de setembro"→a próxima 09-10.
+- Se não houver data clara, use ${today} para tarefas simples.
 Períodos: morning (05:00–11:59), afternoon (12:00–17:59), night (18:00–04:59).
 Valores em dinheiro: devolva "amount" como NÚMERO puro em reais (ex: 42 para "R$ 42", 1200 para "mil e duzentos"), sem símbolo, sem separador de milhar.
 
 Intenções possíveis e seus campos:
 - create_task: { task, date, period, time(ou null) } — criar tarefa/compromisso.
+- complete_task: { query } — marcar uma tarefa existente como concluída/feita (query = nome dela).
 - move_task: { query, to } — mover uma tarefa existente (query = nome dela, to = data destino).
 - delete_task: { query } — apagar uma tarefa.
 - create_goal: { text, goalType("bool" ou "counter"), target(int ou null) } — meta da semana (não financeira).
@@ -83,6 +89,7 @@ Intenções possíveis e seus campos:
 - create_expense: { text, amount, category(ou null), date } — registrar um gasto.
 - create_income: { text, amount, date } — registrar uma entrada/receita.
 - create_bill: { text, amount, dueDate(ou null), remindBeforeDays(int, padrão 1) } — cadastrar uma conta a pagar.
+- mark_bill_paid: { query } — marcar uma conta a pagar existente como paga (query = nome dela).
 - create_finance_goal: { text, targetAmount, currentAmount(ou 0) } — meta financeira (guardar dinheiro).
 - query_finance_summary: {} — "quanto gastei/entrou/sobrou esse mês".
 - change_theme_color: { color("roxo"|"azul"|"verde") } — trocar a cor do app.
@@ -131,6 +138,10 @@ Responda ESTRITAMENTE com um único objeto JSON válido, sem markdown, no format
       out.period = PERIODS.includes(p.period) ? p.period : (out.time ? periodFromTime(out.time) : 'morning');
       break;
     }
+    case 'complete_task':
+      out.query = String(p.query || p.task || '').trim().slice(0, 120);
+      if (!out.query) return res.status(200).json({ ok: true, intent: 'unknown', message: 'Qual tarefa concluir?' });
+      break;
     case 'move_task': out.query = String(p.query || p.task || '').slice(0, 120); out.to = normDate(p.to) || null; break;
     case 'delete_task': out.query = String(p.query || p.task || '').slice(0, 120); break;
     case 'create_goal':
@@ -152,6 +163,10 @@ Responda ESTRITAMENTE com um único objeto JSON válido, sem markdown, no format
       out.text = String(p.text || p.task || 'Conta').trim().slice(0, 80);
       out.dueDate = normDate(p.dueDate);
       out.remindBeforeDays = Number.isFinite(p.remindBeforeDays) ? Math.max(0, Math.min(30, Math.round(p.remindBeforeDays))) : 1;
+      break;
+    case 'mark_bill_paid':
+      out.query = String(p.query || p.text || '').trim().slice(0, 80);
+      if (!out.query) return res.status(200).json({ ok: true, intent: 'unknown', message: 'Qual conta marcar como paga?' });
       break;
     case 'create_finance_goal':
       out.targetAmount = normAmount(p.targetAmount || p.amount);

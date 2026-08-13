@@ -1459,6 +1459,7 @@
   function handleCommand(cmd) {
     switch (cmd.intent) {
       case 'create_task': return doCreateTask(cmd);
+      case 'complete_task': return doCompleteTask(cmd);
       case 'create_goal': return doCreateGoal(cmd);
       case 'move_task': return doMoveTask(cmd);
       case 'delete_task': return doDeleteTask(cmd);
@@ -1468,6 +1469,7 @@
       case 'create_expense': return doCreateTx(cmd, 'expense');
       case 'create_income': return doCreateTx(cmd, 'income');
       case 'create_bill': return doCreateBill(cmd);
+      case 'mark_bill_paid': return doMarkBillPaid(cmd);
       case 'create_finance_goal': return doCreateFinGoal(cmd);
       case 'query_finance_summary': return assistAnswer(answerFinance());
       case 'change_theme_color': return doChangeTheme(cmd);
@@ -1527,6 +1529,15 @@
       assistDone('Tarefa apagada', null);
     });
   }
+  function doCompleteTask(cmd) {
+    const found = findTaskByQuery(cmd.query || cmd.task);
+    if (!found) return assistFail('Não achei essa tarefa.');
+    const f = findItem(found.iso, found.id);
+    if (!f) return assistFail('Não achei essa tarefa.');
+    if (f.it.done) return assistAnswer(`"${found.text}" já está concluída.`);
+    f.it.done = true; save(); rerender(); scheduleNotifications();
+    assistDone(`"${found.text}" concluída`, () => { const g = findItem(found.iso, found.id); if (g) { g.it.done = false; save(); rerender(); scheduleNotifications(); } });
+  }
   function answerTasks(iso) {
     const items = itemsWithPeriod(iso).map((x) => x.it);
     const total = items.length, done = items.filter((i) => i.done).length;
@@ -1585,6 +1596,18 @@
     const b = addBill(cmd.text || cmd.task || 'Conta', amt, due, cmd.remindBeforeDays);
     rerender(); scheduleNotifications();
     assistDone(`Conta ${cap(b.text)} de ${fmtMoney(amt)}${due ? ' · ' + dueTxt(due).toLowerCase() : ''}`, () => { removeBill(b.id); rerender(); scheduleNotifications(); });
+  }
+  function findBillByQuery(q) {
+    q = (q || '').toLowerCase().trim(); if (!q) return null;
+    return state.finance.bills.find((b) => !b.paid && (b.text || '').toLowerCase().includes(q))
+        || state.finance.bills.find((b) => (b.text || '').toLowerCase().includes(q)) || null;
+  }
+  function doMarkBillPaid(cmd) {
+    const b = findBillByQuery(cmd.query || cmd.text);
+    if (!b) return assistFail('Não achei essa conta.');
+    if (b.paid) return assistAnswer(`A conta "${b.text}" já está paga.`);
+    b.paid = true; save(); rerender(); scheduleNotifications();
+    assistDone(`Conta "${cap(b.text)}" marcada como paga`, () => { b.paid = false; save(); rerender(); scheduleNotifications(); });
   }
   function doCreateFinGoal(cmd) {
     const tgt = money(cmd.targetAmount || cmd.amount);
