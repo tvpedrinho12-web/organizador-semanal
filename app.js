@@ -21,17 +21,24 @@
 
   function defaultState() {
     return {
-      version: 3,
+      version: 4,
       goals: [],
       goalProgress: {},
       days: {},
       routines: [],
       streak: { history: [], breaksLogged: {} },
-      settings: { dailyReminder: '08:00', defaultReminder: 10, streakGoal: 30, eveningNudge: '20:30' },
+      finance: { tx: [], bills: [], goals: [] },
+      settings: {
+        dailyReminder: '08:00', defaultReminder: 10, streakGoal: 30, eveningNudge: '20:30',
+        theme: 'roxo', voice: true, suggestions: true, shortAnswers: false,
+        notif: { tasks: true, daily: true, bills: true, streak: true },
+        finance: { billReminders: true, showOnHoje: true },
+      },
       aiUsage: { month: monthKey(), count: 0 },
       ui: { suggestDismissed: {}, reviewedDate: null, routineMineDismissed: {} },
     };
   }
+  const THEMES = ['roxo', 'azul', 'verde'];
 
   const dismissed = { carry: {}, sunday: false }; // dismissais só desta sessão
 
@@ -177,12 +184,14 @@
   }
   function pickPhrase(cat, fallback) { return (window.Phrases && Phrases.pick(cat)) || fallback; }
 
+  function notifOn(kind) { const n = (state.settings && state.settings.notif) || {}; return n[kind] !== false; }
+
   function buildReminderPlan() {
     const s = state.settings;
     seedHorizon();
     const plan = { dailyCron: null, dailyNotification: null, tasks: [] };
     const streak = computeStreak();
-    if (s.dailyReminder) {
+    if (s.dailyReminder && notifOn('daily')) {
       plan.dailyCron = utcCronFromLocal(s.dailyReminder);
       plan.dailyNotification = {
         title: 'Hora de organizar',
@@ -192,7 +201,7 @@
       };
     }
     const now = Date.now();
-    for (let i = 0; i <= 3; i++) {
+    if (notifOn('tasks')) for (let i = 0; i <= 3; i++) {
       const iso = addDays(todayISO(), i);
       const st = dayStats(iso);
       allItems(iso).forEach((it) => {
@@ -221,7 +230,7 @@
     const nudgeAt = s.eveningNudge || '20:30';
     const t = todayISO();
     const st = dayStatus(t);
-    if (st === 'incomplete' && nudgeAt) {
+    if (st === 'incomplete' && nudgeAt && notifOn('streak')) {
       const [nh, nm] = nudgeAt.split(':').map(Number);
       const d = fromISO(t); d.setHours(nh, nm, 0, 0);
       const fireAt = d.getTime();
@@ -238,6 +247,31 @@
           },
         });
       }
+    }
+
+    // Lembretes de contas (finanças)
+    const finOn = notifOn('bills') && state.settings.finance && state.settings.finance.billReminders !== false;
+    if (finOn) {
+      (state.finance.bills || []).forEach((b) => {
+        if (b.paid || !b.dueDate) return;
+        const rem = b.remindBeforeDays != null ? b.remindBeforeDays : 1;
+        const fireIso = addDays(b.dueDate, -rem);
+        const d = fromISO(fireIso); d.setHours(9, 0, 0, 0);
+        const fireAt = d.getTime();
+        if (fireAt > now + 15000) {
+          const dd = daysBetween(todayISO(), b.dueDate);
+          plan.tasks.push({
+            key: 'bill|' + b.id,
+            notBeforeUnix: Math.floor(fireAt / 1000),
+            notification: {
+              title: 'Conta a vencer: ' + b.text,
+              body: `${fmtMoney(b.amount)} · ${dueTxt(b.dueDate).toLowerCase()}`,
+              tag: 'bill-' + b.id, data: {},
+              gen: { type: 'billReminder', bill: b.text, amount: b.amount, dueInDays: dd },
+            },
+          });
+        }
+      });
     }
     return plan;
   }
@@ -313,6 +347,34 @@
     openBreakModal(info.date, info.len);
   }
 
+  // ---------- Tema ----------
+  function applyTheme(name) {
+    const t = THEMES.includes(name) ? name : 'roxo';
+    document.documentElement.dataset.theme = t;
+  }
+  function themeLabel(t) { return ({ roxo: 'Roxo Noite', azul: 'Azul Profundo', verde: 'Verde Jade' })[t] || t; }
+  function setTheme(t) {
+    if (!THEMES.includes(t)) return;
+    state.settings.theme = t; applyTheme(t); save();
+    if (currentView === 'ajustes') renderSettings();
+  }
+
+  // ---------- Dinheiro / datas ----------
+  function fmtMoney(v) {
+    const n = Math.round((Number(v) || 0) * 100) / 100;
+    const s = n.toLocaleString('pt-BR', { minimumFractionDigits: n % 1 === 0 ? 0 : 2, maximumFractionDigits: 2 });
+    return 'R$ ' + s;
+  }
+  function monthOf(iso) { return (iso || '').slice(0, 7); }
+  function curMonth() { return todayISO().slice(0, 7); }
+  const MONTHS_CAP = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+  function fmtDayShort(iso) {
+    const rel = relLabel(iso);
+    if (rel) return rel;
+    const d = fromISO(iso);
+    return `${d.getDate()} de ${MONTHS[d.getMonth()]}`;
+  }
+
   // ---------- Utilidades visuais ----------
   function conic(pct, color, rest) {
     const c = color || 'var(--purple)';
@@ -326,6 +388,7 @@
     renderHoje();
     if (currentView === 'semana') renderSemana();
     if (currentView === 'progresso') renderProgresso();
+    if (currentView === 'financas') renderFinancas();
     if (currentView === 'ajustes') { /* estático + diag; nada dependente do dia */ }
   }
 
@@ -348,6 +411,7 @@
     renderTimed();
     renderUntimed();
     renderDaySummary();
+    renderHojeFin();
     renderSuggestion();
   }
 
@@ -510,6 +574,7 @@
     const slot = $('#suggestionSlot');
     slot.innerHTML = '';
     if (viewDate !== todayISO()) return;
+    if (state.settings && state.settings.suggestions === false) return;
     pruneSuggestDismissed();
     const sug = buildSuggestion();
     if (!sug) return;
@@ -878,10 +943,12 @@
     clearTimers();
     if (window.__pushActive) return;
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
-    const [dh, dm] = state.settings.dailyReminder.split(':').map(Number);
-    scheduleAt(dh, dm, () => notify('Hora de organizar', { body: pickPhrase('dailyReminder', 'Define suas prioridades antes que o dia te defina.'), tag: 'daily' }));
+    if (notifOn('daily')) {
+      const [dh, dm] = state.settings.dailyReminder.split(':').map(Number);
+      scheduleAt(dh, dm, () => notify('Hora de organizar', { body: pickPhrase('dailyReminder', 'Define suas prioridades antes que o dia te defina.'), tag: 'daily' }));
+    }
     const t = todayISO();
-    allItems(t).forEach((it) => {
+    if (notifOn('tasks')) allItems(t).forEach((it) => {
       if (!it.time || it.done) return;
       const [h, m] = it.time.split(':').map(Number);
       const rem = (it.reminder != null ? it.reminder : state.settings.defaultReminder) || 0;
@@ -893,6 +960,18 @@
           body: `${it.time} · ${pickPhrase('taskReminder', 'Está no horário. Levanta e faz.')}`,
           tag: 'task-' + it.id, data: { itemId: it.id, date: t }, actions: [{ action: 'done', title: 'Concluir' }],
         }), delay));
+      }
+    });
+    // lembretes de contas (fallback local)
+    const finOn = notifOn('bills') && state.settings.finance && state.settings.finance.billReminders !== false;
+    if (finOn) (state.finance.bills || []).forEach((b) => {
+      if (b.paid || !b.dueDate) return;
+      const rem = b.remindBeforeDays != null ? b.remindBeforeDays : 1;
+      const fireIso = addDays(b.dueDate, -rem);
+      const d = fromISO(fireIso); d.setHours(9, 0, 0, 0);
+      const delay = d.getTime() - Date.now();
+      if (delay > 0 && delay < 26 * 3600000) {
+        timers.push(setTimeout(() => notify('Conta a vencer: ' + b.text, { body: `${fmtMoney(b.amount)} · ${dueTxt(b.dueDate).toLowerCase()}`, tag: 'bill-' + b.id }), delay));
       }
     });
   }
@@ -918,27 +997,109 @@
   }
 
   // ---------- Views ----------
-  const SCREENS = ['hoje', 'semana', 'progresso', 'ajustes'];
+  const SCREENS = ['hoje', 'semana', 'progresso', 'financas', 'ajustes'];
   function switchView(v) {
     currentView = v;
     SCREENS.forEach((name) => $('#screen-' + name).classList.toggle('hidden', name !== v));
     $$('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === v));
+    // o dock (assistente + navegação) some em Ajustes, que tem barra própria
+    $('#bottomDock').classList.toggle('hidden', v === 'ajustes');
     if (v === 'hoje') renderHoje();
     if (v === 'semana') renderSemana();
     if (v === 'progresso') renderProgresso();
+    if (v === 'financas') renderFinancas();
     if (v === 'ajustes') renderSettings();
     window.scrollTo(0, 0);
   }
 
   // ---------- Ajustes ----------
+  function bindToggle(id, getter, setter) {
+    const el = $('#' + id);
+    if (!el) return;
+    el.onclick = () => { const nv = !getter(); setter(nv); el.classList.toggle('on', nv); save(); };
+  }
+  function paintToggle(id, on) { const el = $('#' + id); if (el) el.classList.toggle('on', !!on); }
   function renderSettings() {
     $('#dailyReminder').value = state.settings.dailyReminder;
     $('#defaultReminder').value = state.settings.defaultReminder;
     $('#streakGoalInput').value = state.settings.streakGoal;
     $('#aiUsageCount').textContent = aiUsageCount();
+    // swatch selecionado
+    $$('#colorSwatches .swatch').forEach((b) => b.classList.toggle('on', b.dataset.color === state.settings.theme));
+    // estado dos toggles
+    paintToggle('tglVoice', state.settings.voice !== false && voiceSupported());
+    paintToggle('tglSuggest', state.settings.suggestions !== false);
+    paintToggle('tglShort', !!state.settings.shortAnswers);
+    paintToggle('tglNotifTasks', state.settings.notif.tasks !== false);
+    paintToggle('tglNotifDaily', state.settings.notif.daily !== false);
+    paintToggle('tglNotifBills', state.settings.notif.bills !== false);
+    paintToggle('tglNotifStreak', state.settings.notif.streak !== false);
+    paintToggle('tglFinBills', state.settings.finance.billReminders !== false);
+    paintToggle('tglFinHoje', state.settings.finance.showOnHoje !== false);
     renderRoutines();
     updateNotifButton();
     refreshDiag();
+    renderDiagCard();
+  }
+  async function testNotification() {
+    if (!('Notification' in window)) { toast('Notificações indisponíveis'); return; }
+    if (Notification.permission !== 'granted') {
+      const p = await Notification.requestPermission();
+      updateNotifButton();
+      if (p !== 'granted') { toast('Permissão não concedida'); return; }
+    }
+    notify('Notificação de teste', { body: 'Se você viu isso, está funcionando.', tag: 'test' });
+    toast('Notificação enviada');
+  }
+  async function renderDiagCard() {
+    const el = $('#diagCard');
+    if (!el) return;
+    const perm = ('Notification' in window) ? Notification.permission : 'indisponível';
+    const permOk = perm === 'granted';
+    let pushOk = false, sub = false;
+    if (window.PushClient && window.PushClient.supported()) {
+      try { const i = await window.PushClient.info(); pushOk = !!i.backendReachable; sub = !!i.hasSubscription; } catch (e) {}
+    }
+    const line = (k, ok, txt) => `<div class="diag-line"><div class="dl-key">${k}</div><div class="dl-val"><span class="diag-dot ${ok ? 'ok' : 'no'}"></span>${esc(txt)}</div></div>`;
+    el.innerHTML =
+      line('Notificações', permOk, permOk ? 'Concedidas' : (perm === 'denied' ? 'Bloqueadas' : 'Não ativadas')) +
+      line('Push', pushOk, pushOk ? 'Conectado' : 'Sem backend') +
+      line('Inscrição', sub, sub ? 'Ativa' : 'Não inscrito');
+  }
+  // Exportar / importar dados
+  function exportData() {
+    try {
+      const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'organizador-backup-' + todayISO() + '.json';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast('Backup exportado');
+    } catch (e) { toast('Falha ao exportar'); }
+  }
+  function importData(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      let data = null;
+      try { data = JSON.parse(reader.result); } catch { toast('Arquivo inválido'); return; }
+      if (!data || typeof data !== 'object' || !data.days || typeof data.days !== 'object') { toast('Não parece um backup válido'); return; }
+      if (!confirm('Importar este backup? Ele substitui os dados atuais deste aparelho.')) return;
+      // mescla com o estado padrão para garantir campos novos (migração aditiva)
+      state = Object.assign(defaultState(), data);
+      state.settings = Object.assign(defaultState().settings, data.settings || {});
+      state.settings.notif = Object.assign({ tasks: true, daily: true, bills: true, streak: true }, (data.settings && data.settings.notif) || {});
+      state.settings.finance = Object.assign({ billReminders: true, showOnHoje: true }, (data.settings && data.settings.finance) || {});
+      if (!state.finance || typeof state.finance !== 'object') state.finance = { tx: [], bills: [], goals: [] };
+      ['tx', 'bills', 'goals'].forEach((k) => { if (!Array.isArray(state.finance[k])) state.finance[k] = []; });
+      if (!THEMES.includes(state.settings.theme)) state.settings.theme = 'roxo';
+      state.version = 4;
+      applyTheme(state.settings.theme);
+      save(); viewDate = todayISO(); seedHorizon(); render(); switchView('hoje');
+      toast('Backup importado');
+    };
+    reader.onerror = () => toast('Falha ao ler o arquivo');
+    reader.readAsText(file);
   }
   async function refreshDiag() {
     const el = $('#pushDiag');
@@ -1191,50 +1352,413 @@
   }
   function hideUndo() { $('#snackbar').classList.add('hidden'); snackFn = null; clearTimeout(snackTimer); }
 
-  // ---------- Criar tarefa por texto (IA) ----------
+  // ---------- Assistente global (barra fixa, voz/texto) ----------
   function apiBase() { return ((window.PUSH_CONFIG && window.PUSH_CONFIG.apiBase) || '').replace(/\/$/, ''); }
-  let aiBusy = false;
-  async function aiCreateTask() {
-    if (aiBusy) return;
-    const input = $('#aiText');
-    const hint = $('#aiHint');
-    const text = input.value.trim();
-    hint.classList.remove('err');
-    if (!text) { input.focus(); return; }
-    aiBusy = true; $('#aiBar').classList.add('busy'); $('#aiSend').disabled = true; hint.textContent = 'Interpretando…';
+  function cap(s) { s = String(s || ''); return s.charAt(0).toUpperCase() + s.slice(1); }
+  function money(v) { const n = Number(v); return isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : 0; }
+  function rerender() {
+    if (currentView === 'financas') renderFinancas();
+    else if (currentView === 'semana') renderSemana();
+    else if (currentView === 'progresso') renderProgresso();
+    else renderHoje();
+  }
+
+  const MIC16 = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3" fill="currentColor"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4M9 21h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+  const SEND16 = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const CHECK16 = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true"><path d="M5 13l4 4 10-10" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const ARROW_DOWN = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12l7 7 7-7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const ARROW_UP = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+  let assistBusy = false, assistIdleTimer = null;
+
+  function renderAssistant(stateName, data) {
+    const bar = $('#assistantBar');
+    if (!bar) return;
+    bar.classList.remove('listening');
+    data = data || {};
+    if (stateName === 'listening') {
+      bar.classList.add('listening');
+      bar.innerHTML = '<div class="assist-mic rec"><span class="core"></span></div><div class="assist-status">Estou ouvindo…</div><div class="assist-wave"><i></i><i></i><i></i><i></i></div>';
+      return;
+    }
+    if (stateName === 'processing') {
+      bar.innerHTML = '<div class="assist-dots"><i></i><i></i><i></i></div><div class="assist-status">' + esc(data.label || 'Organizando…') + '</div>';
+      return;
+    }
+    // normal
+    const showMic = state.settings.voice !== false && voiceSupported();
+    bar.innerHTML =
+      '<button class="assist-mic' + (showMic ? '' : ' hidden') + '" id="assistMic" type="button" aria-label="Falar">' + MIC16 + '</button>' +
+      '<input type="text" id="assistInput" placeholder="Fale ou escreva o que você quer fazer…" autocomplete="off" enterkeyhint="send" aria-label="Assistente" />' +
+      '<button class="assist-send" id="assistSend" type="button" aria-label="Enviar">' + SEND16 + '</button>';
+    const inp = $('#assistInput'), send = $('#assistSend'), mic = $('#assistMic');
+    if (send) send.onclick = () => submitAssistant();
+    if (mic) mic.onclick = toggleVoice;
+    if (inp) {
+      inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitAssistant(); });
+      inp.addEventListener('focus', () => bar.classList.add('focused'));
+      inp.addEventListener('blur', () => bar.classList.remove('focused'));
+    }
+  }
+  function resetAssistant() { clearTimeout(assistIdleTimer); clearConfirm(); renderAssistant('normal'); }
+  function assistDone(message, undoFn) {
+    const bar = $('#assistantBar'); if (!bar) return; bar.classList.remove('listening');
+    bar.innerHTML = '<div class="assist-check">' + CHECK16 + '</div><div class="assist-status">' + esc(message) + '</div>' + (undoFn ? '<button class="assist-undo" id="assistUndoBtn" type="button">Desfazer</button>' : '');
+    if (undoFn) $('#assistUndoBtn').onclick = () => { undoFn(); toast('Desfeito'); resetAssistant(); };
+    clearTimeout(assistIdleTimer); assistIdleTimer = setTimeout(resetAssistant, undoFn ? 6000 : 3500);
+  }
+  function assistAnswer(message) {
+    const bar = $('#assistantBar'); if (!bar) return; bar.classList.remove('listening');
+    bar.innerHTML = '<div class="assist-status" style="flex:1">' + esc(message) + '</div><button class="assist-undo" id="assistOk" type="button">OK</button>';
+    $('#assistOk').onclick = resetAssistant;
+    clearTimeout(assistIdleTimer); assistIdleTimer = setTimeout(resetAssistant, 8000);
+  }
+  function assistFail(message) {
+    const bar = $('#assistantBar'); if (!bar) return; bar.classList.remove('listening');
+    bar.innerHTML = '<div class="assist-status muted" style="flex:1">' + esc(message) + '</div>';
+    clearTimeout(assistIdleTimer); assistIdleTimer = setTimeout(resetAssistant, 4200);
+  }
+
+  // Confirmação (ação maior)
+  let pendingConfirm = null;
+  function showConfirm(text, onYes) {
+    pendingConfirm = onYes;
+    const slot = $('#assistantConfirm');
+    slot.innerHTML = '<div class="assist-confirm"><div class="assist-confirm-text">' + esc(text) + '</div><div class="assist-confirm-actions"><button class="ac-yes" id="acYes" type="button">Confirmar</button><button class="ac-no" id="acNo" type="button">Cancelar</button></div></div>';
+    $('#acYes').onclick = () => { const fn = pendingConfirm; clearConfirm(); if (fn) fn(); };
+    $('#acNo').onclick = () => { clearConfirm(); resetAssistant(); toast('Cancelado'); };
+    renderAssistant('normal');
+  }
+  function clearConfirm() { pendingConfirm = null; const s = $('#assistantConfirm'); if (s) s.innerHTML = ''; }
+
+  async function submitAssistant(textArg) {
+    if (assistBusy) return;
+    const inp = $('#assistInput');
+    const text = (textArg != null ? textArg : (inp ? inp.value : '')).trim();
+    if (!text) { if (inp) inp.focus(); return; }
+    clearConfirm();
+    assistBusy = true;
+    renderAssistant('processing', { label: 'Pensando…' });
     try {
       bumpAiUsage();
-      const res = await fetch(apiBase() + '/api/parse-task', {
+      const res = await fetch(apiBase() + '/api/assistant-command', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, today: todayISO() }),
+        body: JSON.stringify({ text, today: todayISO(), now: pad(new Date().getHours()) + ':' + pad(new Date().getMinutes()) }),
       });
-      let data = null;
-      try { data = await res.json(); } catch { /* resposta não-JSON */ }
-      if (!data) { hint.classList.add('err'); hint.textContent = 'IA indisponível aqui (precisa do backend).'; return; }
-      if (!data.ok) { hint.classList.add('err'); hint.textContent = data.message || 'Não consegui entender. Tente falar de outro jeito.'; return; }
-
-      const t = data.task;
-      const period = PERIODS.some((p) => p.key === t.period) ? t.period : 'morning';
-      const date = /^\d{4}-\d{2}-\d{2}$/.test(t.date) ? t.date : todayISO();
-      const newId = uid();
-      dayData(date)[period].push({ id: newId, text: t.task, time: t.time || null, reminder: null, done: false });
-      input.value = '';
-      hint.textContent = 'Ex.: "Amanhã às 14h preciso gravar três vídeos"';
-      if (date !== viewDate) viewDate = date;
-      save(); render(); scheduleNotifications();
-      const when = date === todayISO() ? 'hoje' : (relLabel(date).toLowerCase() || fmtLong(date));
-      const timePart = t.time ? ' às ' + t.time : '';
-      const cap = t.task.charAt(0).toUpperCase() + t.task.slice(1);
-      showUndo(`${cap} ${date === todayISO() ? 'adicionada hoje' : 'adicionada ' + when}${timePart}`, () => {
-        removeItemById(date, newId);
-        save(); render(); scheduleNotifications();
-        toast('Desfeito');
-      });
+      let data = null; try { data = await res.json(); } catch {}
+      if (!data) { assistFail('Assistente indisponível aqui (precisa do backend).'); return; }
+      if (!data.ok) { assistFail(data.message || 'Não consegui entender. Tente falar de outro jeito.'); return; }
+      handleCommand(data);
     } catch (e) {
-      hint.classList.add('err'); hint.textContent = 'Sem conexão com a IA. Tente de novo.';
+      assistFail('Sem conexão com o assistente. Tente de novo.');
     } finally {
-      aiBusy = false; $('#aiBar').classList.remove('busy'); $('#aiSend').disabled = false;
+      assistBusy = false;
     }
+  }
+
+  function handleCommand(cmd) {
+    switch (cmd.intent) {
+      case 'create_task': return doCreateTask(cmd);
+      case 'create_goal': return doCreateGoal(cmd);
+      case 'move_task': return doMoveTask(cmd);
+      case 'delete_task': return doDeleteTask(cmd);
+      case 'organize_day': resetAssistant(); if (currentView !== 'hoje') { viewDate = todayISO(); switchView('hoje'); } organizeDay(); return;
+      case 'query_today': return assistAnswer(answerTasks(todayISO()));
+      case 'query_tomorrow': return assistAnswer(answerTasks(addDays(todayISO(), 1)));
+      case 'create_expense': return doCreateTx(cmd, 'expense');
+      case 'create_income': return doCreateTx(cmd, 'income');
+      case 'create_bill': return doCreateBill(cmd);
+      case 'create_finance_goal': return doCreateFinGoal(cmd);
+      case 'query_finance_summary': return assistAnswer(answerFinance());
+      case 'change_theme_color': return doChangeTheme(cmd);
+      case 'toggle_setting': return doToggleSetting(cmd);
+      default: return assistAnswer(cmd.message || 'Não entendi. Tente de outro jeito.');
+    }
+  }
+
+  // --- Handlers de organização ---
+  function doCreateTask(cmd) {
+    const period = PERIODS.some((p) => p.key === cmd.period) ? cmd.period : 'morning';
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(cmd.date) ? cmd.date : todayISO();
+    const id = uid();
+    dayData(date)[period].push({ id, text: cmd.task, time: cmd.time || null, reminder: null, done: false });
+    if (date !== viewDate) viewDate = date;
+    save(); rerender(); scheduleNotifications();
+    assistDone(`${cap(cmd.task)} ${date === todayISO() ? 'adicionada hoje' : 'adicionada ' + fmtDayShort(date).toLowerCase()}${cmd.time ? ' às ' + cmd.time : ''}`, () => { removeItemById(date, id); save(); rerender(); scheduleNotifications(); });
+  }
+  function doCreateGoal(cmd) {
+    const type = cmd.goalType === 'counter' ? 'counter' : 'bool';
+    const target = type === 'counter' ? Math.max(1, parseInt(cmd.target, 10) || 1) : null;
+    const g = { id: uid(), text: cmd.text || cmd.task || 'Meta', type, target };
+    state.goals.push(g);
+    save(); if (currentView === 'semana') renderGoals();
+    assistDone('Meta criada: ' + cap(g.text), () => { deleteGoal(g.id); });
+  }
+  function findTaskByQuery(q) {
+    q = (q || '').toLowerCase().trim(); if (!q) return null;
+    const passes = [false, true];
+    for (const anyDone of passes) {
+      for (let i = 0; i <= 7; i++) {
+        const iso = addDays(todayISO(), i); const d = state.days[iso]; if (!d) continue;
+        for (const p of PERIODS) for (const it of (d[p.key] || [])) {
+          if ((anyDone || !it.done) && it.text.toLowerCase().includes(q)) return { iso, id: it.id, text: it.text };
+        }
+      }
+    }
+    return null;
+  }
+  function doMoveTask(cmd) {
+    const found = findTaskByQuery(cmd.query || cmd.task);
+    if (!found) return assistFail('Não achei essa tarefa.');
+    const to = /^\d{4}-\d{2}-\d{2}$/.test(cmd.to || cmd.date) ? (cmd.to || cmd.date) : addDays(todayISO(), 1);
+    showConfirm(`Mover "${found.text}" para ${fmtDayShort(to).toLowerCase()}?`, () => {
+      const f = findItem(found.iso, found.id); if (!f) { resetAssistant(); return; }
+      removeItemById(found.iso, found.id);
+      dayData(to)[f.period].push({ id: uid(), text: f.it.text, time: f.it.time || null, reminder: (f.it.reminder != null ? f.it.reminder : null), done: false, priority: f.it.priority || null });
+      save(); rerender(); scheduleNotifications();
+      assistDone(`"${found.text}" movida`, null);
+    });
+  }
+  function doDeleteTask(cmd) {
+    const found = findTaskByQuery(cmd.query || cmd.task);
+    if (!found) return assistFail('Não achei essa tarefa.');
+    showConfirm(`Apagar "${found.text}"?`, () => {
+      removeItemById(found.iso, found.id); save(); rerender(); scheduleNotifications();
+      assistDone('Tarefa apagada', null);
+    });
+  }
+  function answerTasks(iso) {
+    const items = itemsWithPeriod(iso).map((x) => x.it);
+    const total = items.length, done = items.filter((i) => i.done).length;
+    const pend = items.filter((i) => !i.done);
+    const label = iso === todayISO() ? 'Hoje' : (iso === addDays(todayISO(), 1) ? 'Amanhã' : fmtLong(iso));
+    if (!total) return `${label} você não tem nada agendado.`;
+    if (!pend.length) return `${label} está tudo concluído (${done}/${total}).`;
+    if (state.settings.shortAnswers) return `${label}: ${pend.length} pendente${pend.length > 1 ? 's' : ''} de ${total}.`;
+    const names = pend.slice(0, 4).map((i) => i.time ? `${i.text} (${i.time})` : i.text).join(', ');
+    const extra = pend.length > 4 ? ` e mais ${pend.length - 4}` : '';
+    return `${label}: ${names}${extra}. ${done}/${total} concluídas.`;
+  }
+  function answerFinance() {
+    const s = financeSummary(curMonth());
+    if (state.settings.shortAnswers) return `Sobrou ${fmtMoney(s.left)} este mês.`;
+    return `Este mês: entrou ${fmtMoney(s.inc)}, saiu ${fmtMoney(s.exp)}, sobrou ${fmtMoney(s.left)}.`;
+  }
+  function doChangeTheme(cmd) {
+    const map = { roxo: 'roxo', roxa: 'roxo', purple: 'roxo', azul: 'azul', blue: 'azul', verde: 'verde', green: 'verde', jade: 'verde' };
+    const th = map[(cmd.color || '').toLowerCase()];
+    if (!th) return assistFail('Conheço só roxo, azul e verde.');
+    setTheme(th);
+    assistDone('Tema alterado para ' + themeLabel(th), null);
+  }
+  function doToggleSetting(cmd) {
+    const val = !!cmd.value;
+    switch (cmd.setting) {
+      case 'voice': state.settings.voice = val; break;
+      case 'suggestions': state.settings.suggestions = val; break;
+      case 'short_answers': state.settings.shortAnswers = val; break;
+      case 'bill_reminders': state.settings.finance.billReminders = val; break;
+      case 'finance_hoje': state.settings.finance.showOnHoje = val; break;
+      default: return assistFail('Não sei mudar esse ajuste.');
+    }
+    save(); if (currentView === 'ajustes') renderSettings(); rerender();
+    assistDone((val ? 'Ativado' : 'Desativado') + ': ' + settingLabel(cmd.setting), null);
+  }
+  function settingLabel(k) {
+    return ({ voice: 'voz', suggestions: 'sugestões', short_answers: 'respostas curtas', bill_reminders: 'lembretes de contas', finance_hoje: 'resumo financeiro na Hoje' })[k] || k;
+  }
+
+  // --- Handlers de finanças ---
+  function doCreateTx(cmd, type) {
+    const amt = money(cmd.amount);
+    if (!amt) return assistFail('Não entendi o valor.');
+    const income = type === 'income';
+    const text = cmd.text || cmd.task || (income ? 'Entrada' : 'Gasto');
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(cmd.date) ? cmd.date : todayISO();
+    const tx = addTx(type, text, amt, cmd.category || null, date);
+    rerender();
+    assistDone(`${income ? 'Entrada' : 'Gasto'} de ${fmtMoney(amt)}${cmd.text ? ` em ${cap(cmd.text)}` : ''} registrad${income ? 'a' : 'o'}`, () => { removeTx(tx.id); rerender(); });
+  }
+  function doCreateBill(cmd) {
+    const amt = money(cmd.amount);
+    const due = /^\d{4}-\d{2}-\d{2}$/.test(cmd.dueDate) ? cmd.dueDate : null;
+    const b = addBill(cmd.text || cmd.task || 'Conta', amt, due, cmd.remindBeforeDays);
+    rerender(); scheduleNotifications();
+    assistDone(`Conta ${cap(b.text)} de ${fmtMoney(amt)}${due ? ' · ' + dueTxt(due).toLowerCase() : ''}`, () => { removeBill(b.id); rerender(); scheduleNotifications(); });
+  }
+  function doCreateFinGoal(cmd) {
+    const tgt = money(cmd.targetAmount || cmd.amount);
+    if (!tgt) return assistFail('Qual o valor da meta?');
+    const g = addFinGoal(cmd.text || cmd.task || 'Meta', tgt, money(cmd.currentAmount));
+    rerender();
+    assistDone(`Meta: ${cap(g.text)} (${fmtMoney(tgt)})`, () => { removeFinGoal(g.id); rerender(); });
+  }
+
+  // ---------- Finanças: dados ----------
+  function addTx(type, text, amount, category, date) {
+    const tx = { id: uid(), type: type === 'income' ? 'income' : 'expense', text: text || '', amount: money(amount), category: category || null, date: date || todayISO(), createdAt: Date.now() };
+    state.finance.tx.push(tx); save(); return tx;
+  }
+  function removeTx(id) { state.finance.tx = state.finance.tx.filter((t) => t.id !== id); save(); }
+  function addBill(text, amount, dueDate, remindBeforeDays) {
+    const b = { id: uid(), text: text || 'Conta', amount: money(amount), dueDate: dueDate || null, remindBeforeDays: (remindBeforeDays != null ? Math.max(0, parseInt(remindBeforeDays, 10) || 0) : 1), paid: false, createdAt: Date.now() };
+    state.finance.bills.push(b); save(); return b;
+  }
+  function removeBill(id) { state.finance.bills = state.finance.bills.filter((b) => b.id !== id); save(); }
+  function addFinGoal(text, target, current) {
+    const g = { id: uid(), text: text || 'Meta', targetAmount: money(target), currentAmount: money(current) || 0, createdAt: Date.now(), completed: false };
+    state.finance.goals.push(g); save(); return g;
+  }
+  function removeFinGoal(id) { state.finance.goals = state.finance.goals.filter((g) => g.id !== id); save(); }
+  function financeSummary(month) {
+    let inc = 0, exp = 0;
+    state.finance.tx.forEach((t) => { if (monthOf(t.date) !== month) return; if (t.type === 'income') inc += t.amount; else exp += t.amount; });
+    return { inc, exp, left: inc - exp };
+  }
+  function dueTxt(iso) {
+    const d = daysBetween(todayISO(), iso);
+    if (d < 0) return 'Venceu ' + fmtDayShort(iso).toLowerCase();
+    if (d === 0) return 'Vence hoje';
+    if (d === 1) return 'Vence amanhã';
+    return 'Vence ' + fmtLong(iso);
+  }
+
+  // ---------- Finanças: render ----------
+  function renderFinancas() {
+    $('#financasSub').textContent = MONTHS_CAP[new Date().getMonth()] + ' de ' + new Date().getFullYear();
+    const s = financeSummary(curMonth());
+    $('#finSummary').innerHTML =
+      `<div class="fin-col"><div class="fin-cap in">Entrou</div><div class="fin-val">${fmtMoney(s.inc)}</div></div>` +
+      `<div class="fin-div"></div>` +
+      `<div class="fin-col"><div class="fin-cap">Saiu</div><div class="fin-val">${fmtMoney(s.exp)}</div></div>` +
+      `<div class="fin-div"></div>` +
+      `<div class="fin-col"><div class="fin-cap left">Sobrou</div><div class="fin-val big">${fmtMoney(s.left)}</div></div>`;
+    renderBills(); renderTxLists(); renderFinGoals();
+  }
+  function renderBills() {
+    const wrap = $('#billList'); wrap.innerHTML = '';
+    const bills = state.finance.bills.slice().sort((a, b) => (a.paid - b.paid) || ((a.dueDate || '9999-99') < (b.dueDate || '9999-99') ? -1 : 1));
+    $('#billsEmpty').classList.toggle('hidden', bills.length > 0);
+    const t = todayISO();
+    bills.forEach((b) => {
+      const dd = b.dueDate ? daysBetween(t, b.dueDate) : null;
+      const soon = !b.paid && dd != null && dd <= 3 && dd >= 0;
+      const row = document.createElement('div');
+      row.className = 'bill-row' + (soon ? ' soon' : '') + (b.paid ? ' paid' : '');
+      const dueLabel = b.paid ? 'Paga' : (b.dueDate ? dueTxt(b.dueDate) : 'Sem data');
+      row.innerHTML = `<div class="bill-body"><div class="bill-name">${esc(b.text)}</div><div class="bill-due${soon ? ' soon' : ''}">${esc(dueLabel)}</div></div><div class="bill-amount">${fmtMoney(b.amount)}</div>`;
+      row.onclick = (e) => openBillMenu(e, b);
+      wrap.appendChild(row);
+    });
+  }
+  function byDateDesc(a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : (b.createdAt || 0) - (a.createdAt || 0); }
+  function renderTxLists() {
+    const exp = state.finance.tx.filter((t) => t.type === 'expense').slice().sort(byDateDesc).slice(0, 8);
+    const inc = state.finance.tx.filter((t) => t.type === 'income').slice().sort(byDateDesc).slice(0, 8);
+    fillTx($('#expenseList'), $('#expensesEmpty'), exp, 'expense');
+    fillTx($('#incomeList'), $('#incomesEmpty'), inc, 'income');
+  }
+  function fillTx(wrap, empty, list, type) {
+    wrap.innerHTML = ''; empty.classList.toggle('hidden', list.length > 0);
+    list.forEach((t) => {
+      const row = document.createElement('div'); row.className = 'tx-row';
+      const sign = type === 'income' ? '+' : '-';
+      row.innerHTML = `<div class="tx-ico ${type}">${type === 'income' ? ARROW_UP : ARROW_DOWN}</div><div class="tx-body"><div class="tx-name">${esc(t.text || (type === 'income' ? 'Entrada' : 'Gasto'))}</div><div class="tx-date">${esc(fmtDayShort(t.date))}${t.category ? ' · ' + esc(t.category) : ''}</div></div><div class="tx-amount ${type}">${sign}${fmtMoney(t.amount)}</div>`;
+      row.onclick = (e) => openTxMenu(e, t);
+      wrap.appendChild(row);
+    });
+  }
+  function renderFinGoals() {
+    const wrap = $('#finGoalList'); wrap.innerHTML = '';
+    $('#finGoalsEmpty').classList.toggle('hidden', state.finance.goals.length > 0);
+    state.finance.goals.forEach((g) => {
+      const pct = g.targetAmount > 0 ? Math.min(100, Math.round(g.currentAmount / g.targetAmount * 100)) : 0;
+      const el = document.createElement('div'); el.className = 'fgoal';
+      el.innerHTML = `<div class="fgoal-top"><div class="fgoal-name">${esc(g.text)}</div><div class="fgoal-sub">${pct}%</div></div><div class="fgoal-bar"><span style="width:${pct}%"></span></div><div class="fgoal-sub">${fmtMoney(g.currentAmount)} de ${fmtMoney(g.targetAmount)}</div>`;
+      el.onclick = (e) => openFinGoalMenu(e, g);
+      wrap.appendChild(el);
+    });
+  }
+  function renderHojeFin() {
+    const slot = $('#hojeFinSlot'); if (!slot) return; slot.innerHTML = '';
+    if (viewDate !== todayISO()) return;
+    if (!state.settings.finance || !state.settings.finance.showOnHoje) return;
+    const s = financeSummary(curMonth());
+    if (s.inc === 0 && s.exp === 0) return;
+    const el = document.createElement('div'); el.className = 'hoje-fin';
+    el.innerHTML = `<div class="hf-left">Sobrou este mês</div><div class="hf-val">${fmtMoney(s.left)}</div>`;
+    el.onclick = () => switchView('financas');
+    slot.appendChild(el);
+  }
+
+  // ---------- Finanças: menus + modais ----------
+  function openBillMenu(ev, b) {
+    openCtxMenu(ev, [
+      { label: b.paid ? 'Marcar como não paga' : 'Marcar como paga', fn: () => { b.paid = !b.paid; save(); rerender(); scheduleNotifications(); toast(b.paid ? 'Conta paga' : 'Reaberta'); } },
+      { label: 'Editar', fn: () => openBillModal(b) },
+      { label: 'Apagar', danger: true, fn: () => { removeBill(b.id); rerender(); scheduleNotifications(); } },
+    ]);
+  }
+  function openTxMenu(ev, t) {
+    openCtxMenu(ev, [
+      { label: 'Editar', fn: () => openTxModal(t.type, t) },
+      { label: 'Apagar', danger: true, fn: () => { removeTx(t.id); rerender(); } },
+    ]);
+  }
+  function openFinGoalMenu(ev, g) {
+    openCtxMenu(ev, [
+      { label: 'Editar / atualizar', fn: () => openFinGoalModal(g) },
+      { label: 'Apagar', danger: true, fn: () => { removeFinGoal(g.id); rerender(); } },
+    ]);
+  }
+  let editingFin = { tx: null, bill: null, goal: null, txType: 'expense' };
+  function openTxModal(type, tx) {
+    editingFin.tx = tx || null; editingFin.txType = tx ? tx.type : type;
+    const isInc = editingFin.txType === 'income';
+    $('#txModalTitle').textContent = tx ? ('Editar ' + (isInc ? 'entrada' : 'gasto')) : (isInc ? 'Nova entrada' : 'Novo gasto');
+    $('#txText').value = tx ? tx.text : ''; $('#txAmount').value = tx ? tx.amount : '';
+    $('#txDate').value = tx ? tx.date : todayISO(); $('#txCategory').value = tx && tx.category ? tx.category : '';
+    show('#txModal'); setTimeout(() => $('#txText').focus(), 50);
+  }
+  function saveTxFromModal() {
+    const amt = money($('#txAmount').value);
+    if (!amt) { toast('Informe o valor'); return; }
+    const text = $('#txText').value.trim(); const date = $('#txDate').value || todayISO(); const cat = $('#txCategory').value.trim() || null;
+    if (editingFin.tx) Object.assign(editingFin.tx, { text, amount: amt, date, category: cat });
+    else addTx(editingFin.txType, text || (editingFin.txType === 'income' ? 'Entrada' : 'Gasto'), amt, cat, date);
+    save(); hide('#txModal'); rerender();
+  }
+  function openBillModal(bill) {
+    editingFin.bill = bill || null;
+    $('#billModalTitle').textContent = bill ? 'Editar conta' : 'Nova conta';
+    $('#billText').value = bill ? bill.text : ''; $('#billAmount').value = bill ? bill.amount : '';
+    $('#billDue').value = bill && bill.dueDate ? bill.dueDate : '';
+    $('#billRemind').value = bill && bill.remindBeforeDays != null ? bill.remindBeforeDays : '';
+    show('#billModal'); setTimeout(() => $('#billText').focus(), 50);
+  }
+  function saveBillFromModal() {
+    const amt = money($('#billAmount').value);
+    const text = $('#billText').value.trim(); const due = $('#billDue').value || null;
+    const remind = $('#billRemind').value === '' ? 1 : Math.max(0, parseInt($('#billRemind').value, 10) || 0);
+    if (!text && !amt) { toast('Preencha a conta'); return; }
+    if (editingFin.bill) Object.assign(editingFin.bill, { text: text || 'Conta', amount: amt, dueDate: due, remindBeforeDays: remind });
+    else addBill(text, amt, due, remind);
+    save(); hide('#billModal'); rerender(); scheduleNotifications();
+  }
+  function openFinGoalModal(goal) {
+    editingFin.goal = goal || null;
+    $('#finGoalModalTitle').textContent = goal ? 'Editar meta' : 'Nova meta';
+    $('#finGoalText').value = goal ? goal.text : ''; $('#finGoalTarget').value = goal ? goal.targetAmount : '';
+    $('#finGoalCurrent').value = goal ? goal.currentAmount : '';
+    show('#finGoalModal'); setTimeout(() => $('#finGoalText').focus(), 50);
+  }
+  function saveFinGoalFromModal() {
+    const tgt = money($('#finGoalTarget').value);
+    if (!tgt) { toast('Informe o valor alvo'); return; }
+    const text = $('#finGoalText').value.trim() || 'Meta'; const cur = money($('#finGoalCurrent').value);
+    if (editingFin.goal) Object.assign(editingFin.goal, { text, targetAmount: tgt, currentAmount: cur, completed: cur >= tgt });
+    else addFinGoal(text, tgt, cur);
+    save(); hide('#finGoalModal'); rerender();
   }
 
   // ---------- Organizar meu dia (IA, requer aprovação) ----------
@@ -1306,10 +1830,15 @@
   }
   function openFocus() {
     viewDate = todayISO();
+    $('#bottomDock').classList.add('hidden');
     show('#focusScreen');
     renderFocus();
   }
-  function closeFocus() { hide('#focusScreen'); render(); }
+  function closeFocus() {
+    hide('#focusScreen');
+    $('#bottomDock').classList.toggle('hidden', currentView === 'ajustes');
+    render();
+  }
   function renderFocus() {
     const body = $('#focusBody'), foot = $('#focusFoot');
     const q = focusQueue();
@@ -1521,38 +2050,36 @@
     });
   }
 
-  // ---------- Voz (Web Speech API) ----------
-  let recog = null, recognizing = false;
+  // ---------- Voz (Web Speech API) — alimenta o assistente global ----------
+  let recog = null, recognizing = false, voiceText = '';
+  function voiceSupported() { return !!(window.SpeechRecognition || window.webkitSpeechRecognition); }
   function initVoice() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { $('#aiMic').classList.add('hidden'); return; }
+    if (!SR) return;
     recog = new SR();
     recog.lang = 'pt-BR';
     recog.interimResults = true;
     recog.continuous = false;
-    recog.onstart = () => { recognizing = true; $('#aiMic').classList.add('recording'); $('#listening').classList.remove('hidden'); };
-    recog.onerror = () => { stopVoiceUI(); };
+    recog.onstart = () => { recognizing = true; renderAssistant('listening'); };
+    recog.onerror = () => { recognizing = false; resetAssistant(); };
     recog.onend = () => {
-      stopVoiceUI();
-      const val = $('#aiText').value.trim();
-      if (val && voiceProduced) aiCreateTask();
-      voiceProduced = false;
+      recognizing = false;
+      const t = (voiceText || '').trim();
+      resetAssistant();
+      if (t) { const inp = $('#assistInput'); if (inp) inp.value = t; submitAssistant(t); }
     };
     recog.onresult = (e) => {
       let txt = '';
       for (let i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript;
-      $('#aiText').value = txt;
-      voiceProduced = true;
+      voiceText = txt;
     };
   }
-  let voiceProduced = false;
-  function stopVoiceUI() { recognizing = false; $('#aiMic').classList.remove('recording'); $('#listening').classList.add('hidden'); }
   function toggleVoice() {
     if (!recog) return;
+    if (state.settings.voice === false) { toast('Voz desativada nos Ajustes'); return; }
     if (recognizing) { try { recog.stop(); } catch {} return; }
-    voiceProduced = false;
-    $('#aiText').value = '';
-    try { recog.start(); } catch (e) { /* já rodando */ }
+    voiceText = '';
+    try { recog.start(); } catch (e) { /* já em execução */ }
   }
 
   // ---------- Eventos ----------
@@ -1561,13 +2088,21 @@
     $$('[data-open-ajustes]').forEach((b) => b.onclick = () => switchView('ajustes'));
     $('#ajustesBack').onclick = () => switchView('hoje');
 
-    // barra IA
-    $('#aiSend').onclick = aiCreateTask;
-    $('#aiMic').onclick = toggleVoice;
-    $('#aiText').addEventListener('keydown', (e) => { if (e.key === 'Enter') aiCreateTask(); });
-    $('#aiText').addEventListener('focus', () => $('#aiBar').classList.add('focused'));
-    $('#aiText').addEventListener('blur', () => $('#aiBar').classList.remove('focused'));
+    // ações rápidas do dia
     $('#organizeDay').onclick = organizeDay;
+
+    // finanças: ações rápidas + modais
+    $('#addExpenseBtn').onclick = () => openTxModal('expense', null);
+    $('#addIncomeBtn').onclick = () => openTxModal('income', null);
+    $('#addBillBtn').onclick = () => openBillModal(null);
+    $('#addFinGoalBtn').onclick = () => openFinGoalModal(null);
+    $('#txCancel').onclick = () => hide('#txModal');
+    $('#txSave').onclick = saveTxFromModal;
+    $('#txAmount').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveTxFromModal(); });
+    $('#billCancel').onclick = () => hide('#billModal');
+    $('#billSave').onclick = saveBillFromModal;
+    $('#finGoalCancel').onclick = () => hide('#finGoalModal');
+    $('#finGoalSave').onclick = saveFinGoalFromModal;
 
     // modo foco (feature 4)
     $('#focusBtn').onclick = openFocus;
@@ -1631,6 +2166,28 @@
     $('#streakGoalInput').onchange = (e) => { state.settings.streakGoal = clampInt(e.target.value, 1, 365, 30); e.target.value = state.settings.streakGoal; save(); renderHoje(); };
     $('#resetBtn').onclick = resetAll;
 
+    // aparência: swatches de cor
+    $$('#colorSwatches .swatch').forEach((b) => b.onclick = () => setTheme(b.dataset.color));
+
+    // toggles do assistente / notificações / finanças
+    bindToggle('tglVoice', () => state.settings.voice !== false, (v) => { state.settings.voice = v; renderAssistant('normal'); });
+    bindToggle('tglSuggest', () => state.settings.suggestions !== false, (v) => { state.settings.suggestions = v; });
+    bindToggle('tglShort', () => !!state.settings.shortAnswers, (v) => { state.settings.shortAnswers = v; });
+    bindToggle('tglNotifTasks', () => state.settings.notif.tasks !== false, (v) => { state.settings.notif.tasks = v; scheduleNotifications(); });
+    bindToggle('tglNotifDaily', () => state.settings.notif.daily !== false, (v) => { state.settings.notif.daily = v; scheduleNotifications(); });
+    bindToggle('tglNotifBills', () => state.settings.notif.bills !== false, (v) => { state.settings.notif.bills = v; scheduleNotifications(); });
+    bindToggle('tglNotifStreak', () => state.settings.notif.streak !== false, (v) => { state.settings.notif.streak = v; scheduleNotifications(); });
+    bindToggle('tglFinBills', () => state.settings.finance.billReminders !== false, (v) => { state.settings.finance.billReminders = v; scheduleNotifications(); });
+    bindToggle('tglFinHoje', () => state.settings.finance.showOnHoje !== false, (v) => { state.settings.finance.showOnHoje = v; });
+
+    // testar notificação
+    $('#notifTestBtn').onclick = testNotification;
+
+    // dados: exportar / importar
+    $('#exportBtn').onclick = exportData;
+    $('#importBtn').onclick = () => $('#importFile').click();
+    $('#importFile').onchange = (e) => { const f = e.target.files && e.target.files[0]; if (f) importData(f); e.target.value = ''; };
+
     // diagnóstico push
     $('#diagRefresh').onclick = refreshDiag;
     $('#diagResync').onclick = async () => {
@@ -1689,7 +2246,9 @@
   function resetAll() {
     if (!confirm('Apagar TODOS os dados deste aparelho? Isso não tem como desfazer.')) return;
     state = defaultState();
+    applyTheme(state.settings.theme);
     save(); viewDate = todayISO();
+    renderAssistant('normal');
     render(); switchView('hoje');
     toast('Tudo apagado');
   }
@@ -1720,17 +2279,27 @@
     try { state = await DB.getState(); } catch (e) { console.error(e); }
     if (!state) { state = defaultState(); await DB.setState(state).catch(() => {}); }
     // migração leve (aditiva — nunca apaga dados existentes)
-    state.settings = Object.assign(defaultState().settings, state.settings || {});
+    const defs = defaultState();
+    state.settings = Object.assign(defs.settings, state.settings || {});
+    state.settings.notif = Object.assign({ tasks: true, daily: true, bills: true, streak: true }, state.settings.notif || {});
+    state.settings.finance = Object.assign({ billReminders: true, showOnHoje: true }, state.settings.finance || {});
+    if (!THEMES.includes(state.settings.theme)) state.settings.theme = 'roxo';
     state.streak = Object.assign({ history: [], breaksLogged: {} }, state.streak || {});
     if (!Array.isArray(state.routines)) state.routines = [];
+    if (!state.finance || typeof state.finance !== 'object') state.finance = { tx: [], bills: [], goals: [] };
+    if (!Array.isArray(state.finance.tx)) state.finance.tx = [];
+    if (!Array.isArray(state.finance.bills)) state.finance.bills = [];
+    if (!Array.isArray(state.finance.goals)) state.finance.goals = [];
     if (!state.aiUsage || typeof state.aiUsage.count !== 'number') state.aiUsage = { month: monthKey(), count: 0 };
     if (!state.ui || typeof state.ui !== 'object') state.ui = { suggestDismissed: {} };
     if (!state.ui.suggestDismissed) state.ui.suggestDismissed = {};
     if (typeof state.ui.reviewedDate === 'undefined') state.ui.reviewedDate = null;
     if (!state.ui.routineMineDismissed) state.ui.routineMineDismissed = {};
-    state.version = 3;
+    state.version = 4;
+    applyTheme(state.settings.theme);
 
     bindEvents();
+    renderAssistant('normal');
     initVoice();
     registerSW();
     seedHorizon();

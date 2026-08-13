@@ -7,7 +7,7 @@
   <meta name="description" content="Organizador pessoal inteligente: fale ou escreva o que precisa fazer e o app organiza. 100% offline." />
 
   <link rel="manifest" href="./manifest.webmanifest" />
-  <meta name="theme-color" content="#16151A" />
+  <meta name="theme-color" content="#0a0a0d" />
 
   <!-- iOS PWA -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -37,26 +37,6 @@
           </svg>
         </button>
       </header>
-
-      <!-- Barra de comando IA -->
-      <section class="ai-block">
-        <div class="ai-label">O que você precisa organizar?</div>
-        <div class="ai-bar" id="aiBar">
-          <input type="text" id="aiText" placeholder="Fale ou escreva aqui…" autocomplete="off" enterkeyhint="done" aria-label="Criar tarefa por texto" />
-          <button class="ai-mic" id="aiMic" type="button" aria-label="Falar">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
-              <rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/>
-              <path d="M6 11a6 6 0 0 0 12 0M12 17v4M9 21h6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
-            </svg>
-          </button>
-          <button class="ai-send" id="aiSend" type="button" aria-label="Enviar">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
-              <path d="M12 20V5M6 11l6-6 6 6" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </button>
-        </div>
-        <div class="ai-hint" id="aiHint">Ex.: "Amanhã às 14h preciso gravar três vídeos"</div>
-      </section>
 
       <!-- Ações rápidas do dia -->
       <section class="today-actions" id="todayActions">
@@ -94,6 +74,9 @@
 
       <!-- Resumo do dia -->
       <section id="daySummarySlot"></section>
+
+      <!-- Resumo financeiro discreto (opcional, controlado nos Ajustes) -->
+      <section id="hojeFinSlot"></section>
     </main>
 
     <!-- ============================================================= -->
@@ -179,6 +162,63 @@
     </main>
 
     <!-- ============================================================= -->
+    <!-- SCREEN: FINANÇAS                                               -->
+    <!-- ============================================================= -->
+    <main class="screen hidden" id="screen-financas">
+      <header class="scr-head">
+        <div class="scr-head-text">
+          <h1>Finanças</h1>
+          <p class="scr-sub" id="financasSub">—</p>
+        </div>
+        <button class="gear-btn" data-open-ajustes type="button" aria-label="Ajustes">
+          <svg viewBox="0 0 24 24" width="19" height="19" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.7"/>
+            <path d="M12 2.5v2M12 19.5v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2.5 12h2M19.5 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </header>
+
+      <!-- Resumo do mês -->
+      <section class="fin-summary" id="finSummary"></section>
+
+      <!-- Ações rápidas -->
+      <section class="fin-add">
+        <button class="chip-btn" id="addExpenseBtn" type="button"><span>− Gasto</span></button>
+        <button class="chip-btn" id="addIncomeBtn" type="button"><span>+ Entrada</span></button>
+        <button class="chip-btn" id="addBillBtn" type="button"><span>Conta</span></button>
+        <button class="chip-btn" id="addFinGoalBtn" type="button"><span>Meta</span></button>
+      </section>
+
+      <!-- Contas próximas -->
+      <section>
+        <div class="section-head"><h2>Contas próximas</h2></div>
+        <div class="fin-list" id="billList"></div>
+        <p class="section-empty" id="billsEmpty">Nenhuma conta cadastrada.</p>
+      </section>
+
+      <!-- Gastos recentes -->
+      <section>
+        <div class="section-head"><h2>Gastos recentes</h2></div>
+        <div class="fin-list" id="expenseList"></div>
+        <p class="section-empty" id="expensesEmpty">Nenhum gasto ainda.</p>
+      </section>
+
+      <!-- Entradas -->
+      <section>
+        <div class="section-head"><h2>Entradas</h2></div>
+        <div class="fin-list" id="incomeList"></div>
+        <p class="section-empty" id="incomesEmpty">Nenhuma entrada ainda.</p>
+      </section>
+
+      <!-- Metas financeiras -->
+      <section>
+        <div class="section-head"><h2>Metas</h2></div>
+        <div class="fin-list" id="finGoalList"></div>
+        <p class="section-empty" id="finGoalsEmpty">Nenhuma meta financeira.</p>
+      </section>
+    </main>
+
+    <!-- ============================================================= -->
     <!-- SCREEN: AJUSTES                                                -->
     <!-- ============================================================= -->
     <main class="screen hidden" id="screen-ajustes">
@@ -192,93 +232,144 @@
         <span class="gear-spacer"></span>
       </header>
 
-      <section class="card">
-        <div class="card-head"><h2>Notificações</h2></div>
-        <div class="setting-row">
-          <label for="notifToggle">Permitir notificações</label>
-          <button id="notifToggle" class="btn-ghost" type="button">Ativar</button>
+      <!-- Aparência -->
+      <div class="set-group">
+        <div class="set-group-label">Aparência</div>
+        <div class="set-card" style="padding:16px;">
+          <div class="si-label" style="margin-bottom:14px;">Cor do app</div>
+          <div class="color-swatches" id="colorSwatches">
+            <button class="swatch" data-color="roxo" type="button">
+              <span class="swatch-dot sw-roxo"><svg class="sw-check" width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4 10-10" stroke="#0a0a0d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+              <span class="swatch-lbl">Roxo<br/>Noite</span>
+            </button>
+            <button class="swatch" data-color="azul" type="button">
+              <span class="swatch-dot sw-azul"><svg class="sw-check" width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4 10-10" stroke="#0a0a0d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+              <span class="swatch-lbl">Azul<br/>Profundo</span>
+            </button>
+            <button class="swatch" data-color="verde" type="button">
+              <span class="swatch-dot sw-verde"><svg class="sw-check" width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4 10-10" stroke="#0a0a0d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+              <span class="swatch-lbl">Verde<br/>Jade</span>
+            </button>
+          </div>
         </div>
-        <div class="setting-row">
-          <label for="dailyReminder">Lembrete diário</label>
-          <input type="time" id="dailyReminder" value="08:00" />
+      </div>
+
+      <!-- Assistente -->
+      <div class="set-group">
+        <div class="set-group-label">Assistente</div>
+        <div class="set-card">
+          <div class="set-item"><div class="si-label">Voz</div><button class="tgl" id="tglVoice" type="button" aria-label="Voz"><span class="knob"></span></button></div>
+          <div class="set-item"><div class="si-label">Sugestões</div><button class="tgl" id="tglSuggest" type="button" aria-label="Sugestões"><span class="knob"></span></button></div>
+          <div class="set-item"><div class="si-label">Respostas curtas</div><button class="tgl" id="tglShort" type="button" aria-label="Respostas curtas"><span class="knob"></span></button></div>
+          <div class="set-item"><div class="si-label">Uso da IA</div><div class="si-value"><span id="aiUsageCount">0</span> chamadas este mês</div></div>
         </div>
-        <div class="setting-row">
-          <label for="defaultReminder">Avisar antes das tarefas (min)</label>
-          <input type="number" id="defaultReminder" min="0" max="120" value="10" />
+      </div>
+
+      <!-- Notificações -->
+      <div class="set-group">
+        <div class="set-group-label">Notificações</div>
+        <div class="set-card">
+          <div class="set-item"><div class="si-label">Permitir notificações</div><button id="notifToggle" class="btn-ghost" type="button" style="padding:7px 14px;font-size:13px;">Ativar</button></div>
+          <div class="set-item"><div class="si-label">Lembretes de tarefas</div><button class="tgl" id="tglNotifTasks" type="button"><span class="knob"></span></button></div>
+          <div class="set-item"><div class="si-label">Resumo diário</div><button class="tgl" id="tglNotifDaily" type="button"><span class="knob"></span></button></div>
+          <div class="set-item"><div class="si-label">Avisos de contas</div><button class="tgl" id="tglNotifBills" type="button"><span class="knob"></span></button></div>
+          <div class="set-item"><div class="si-label">Avisos de sequência</div><button class="tgl" id="tglNotifStreak" type="button"><span class="knob"></span></button></div>
+          <div class="set-item"><div class="si-label">Lembrete diário</div><input type="time" id="dailyReminder" class="set-inline-input" value="08:00" /></div>
+          <div class="set-item"><div class="si-label">Avisar antes das tarefas (min)</div><input type="number" id="defaultReminder" class="set-inline-input" min="0" max="120" value="10" /></div>
+          <div class="set-item"><div class="si-label">Meta de dias seguidos</div><input type="number" id="streakGoalInput" class="set-inline-input" min="1" max="365" value="30" /></div>
+          <div class="set-item action" id="notifTestBtn">Testar notificação</div>
         </div>
         <p class="note" id="notifNote"></p>
-      </section>
+      </div>
 
-      <section class="card">
-        <div class="card-head"><h2>Uso da IA</h2></div>
-        <div class="ai-usage">
-          <div class="ai-usage-num" id="aiUsageCount">0</div>
-          <div class="ai-usage-lbl" id="aiUsageLbl">chamadas este mês</div>
+      <!-- Finanças -->
+      <div class="set-group">
+        <div class="set-group-label">Finanças</div>
+        <div class="set-card">
+          <div class="set-item"><div class="si-label">Lembretes de contas</div><button class="tgl" id="tglFinBills" type="button"><span class="knob"></span></button></div>
+          <div class="set-item"><div class="si-label">Mostrar resumo financeiro na tela Hoje</div><button class="tgl" id="tglFinHoje" type="button"><span class="knob"></span></button></div>
         </div>
-        <p class="note">Contagem local das interações com a IA feitas neste aparelho (criar por texto, organizar o dia). Reinicia a cada mês.</p>
-      </section>
+      </div>
 
-      <section class="card">
-        <div class="card-head"><h2>Sequência</h2></div>
-        <div class="setting-row">
-          <label for="streakGoalInput">Meta de dias seguidos</label>
-          <input type="number" id="streakGoalInput" min="1" max="365" value="30" />
+      <!-- Rotinas -->
+      <div class="set-group">
+        <div class="set-group-label">Rotinas fixas</div>
+        <div class="set-card" style="padding:16px;">
+          <div class="section-head" style="margin-bottom:8px;">
+            <div class="si-label">Repetem toda semana</div>
+            <button class="add-mini" id="addRoutineBtn" type="button" aria-label="Nova rotina">+</button>
+          </div>
+          <ul class="routine-list" id="routineList"></ul>
+          <p class="section-empty" id="routinesEmpty">Nenhuma rotina. Toque em + ou marque "repetir toda semana" ao criar uma tarefa.</p>
         </div>
-      </section>
+      </div>
 
-      <section class="card">
-        <div class="card-head">
-          <h2>Rotina fixa</h2>
-          <button class="add-mini" id="addRoutineBtn" type="button" aria-label="Nova rotina">+</button>
+      <!-- Dados -->
+      <div class="set-group">
+        <div class="set-group-label">Dados</div>
+        <div class="set-card">
+          <div class="set-item tappable" id="exportBtn"><div class="si-label">Exportar dados</div><span class="si-chev"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
+          <div class="set-item tappable" id="importBtn"><div class="si-label">Importar dados</div><span class="si-chev"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
+          <div class="set-item tappable danger" id="resetBtn"><div class="si-label">Apagar tudo</div><span class="si-chev"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
         </div>
-        <p class="note" style="margin-top:0">Tarefas que se repetem toda semana. Aparecem sozinhas nos dias escolhidos.</p>
-        <ul class="routine-list" id="routineList"></ul>
-        <p class="section-empty" id="routinesEmpty">Nenhuma rotina. Toque em + ou marque "repetir toda semana" ao criar uma tarefa.</p>
-      </section>
+        <input type="file" id="importFile" accept="application/json,.json" class="hidden" />
+        <p class="note">Todos os dados ficam só neste aparelho. Exporte de vez em quando para ter um backup.</p>
+      </div>
 
-      <section class="card">
-        <div class="card-head"><h2>Diagnóstico (push)</h2></div>
-        <pre id="pushDiag" class="diag">—</pre>
+      <!-- Diagnóstico -->
+      <div class="set-group">
+        <div class="set-group-label">Diagnóstico</div>
+        <div class="diag-card" id="diagCard"></div>
+        <pre id="pushDiag" class="diag" style="margin-top:12px;">—</pre>
         <div class="diag-actions">
           <button class="btn-ghost" id="diagRefresh" type="button">Atualizar</button>
           <button class="btn-ghost" id="diagResync" type="button">Reagendar</button>
-          <button class="btn-primary" id="diagTest" type="button">Enviar push de teste</button>
+          <button class="btn-primary" id="diagTest" type="button">Testar push</button>
         </div>
         <p class="note" id="diagResult"></p>
-      </section>
-
-      <section class="card">
-        <div class="card-head"><h2>Sobre</h2></div>
-        <p class="note">Todos os dados ficam só neste aparelho (nada de login, servidor ou sincronização). Se você limpar os dados do navegador, o histórico é perdido.</p>
-        <button class="btn-danger" id="resetBtn" type="button">Apagar tudo</button>
-      </section>
+      </div>
     </main>
 
     <!-- ============================================================= -->
-    <!-- BOTTOM NAV                                                     -->
+    <!-- DOCK INFERIOR: assistente global + navegação                  -->
     <!-- ============================================================= -->
-    <nav class="bottom-nav" aria-label="Navegação principal">
-      <button class="nav-btn active" data-view="hoje" type="button">
-        <svg class="nav-ico" viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden="true">
-          <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/>
-          <path d="M12 7v5l3 2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        <span>Hoje</span>
-      </button>
-      <button class="nav-btn" data-view="semana" type="button">
-        <svg class="nav-ico" viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden="true">
-          <rect x="3.5" y="5" width="17" height="15" rx="2.5" stroke="currentColor" stroke-width="1.8"/>
-          <path d="M3.5 9.5h17M8 3.5v3M16 3.5v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-        </svg>
-        <span>Semana</span>
-      </button>
-      <button class="nav-btn" data-view="progresso" type="button">
-        <svg class="nav-ico" viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden="true">
-          <path d="M4 20V10M12 20V4M20 20v-7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>
-        <span>Progresso</span>
-      </button>
-    </nav>
+    <div class="bottom-dock" id="bottomDock">
+      <!-- slot de confirmação (ação maior) -->
+      <div id="assistantConfirm"></div>
+      <!-- barra global do assistente (conteúdo renderizado por JS) -->
+      <div class="assistant-bar" id="assistantBar"></div>
+
+      <nav class="bottom-nav" aria-label="Navegação principal">
+        <button class="nav-btn active" data-view="hoje" type="button">
+          <svg class="nav-ico" viewBox="0 0 24 24" width="21" height="21" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/>
+            <path d="M12 7v5l3 2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="nav-lbl">Hoje</span>
+        </button>
+        <button class="nav-btn" data-view="semana" type="button">
+          <svg class="nav-ico" viewBox="0 0 24 24" width="21" height="21" fill="none" aria-hidden="true">
+            <rect x="3.5" y="5" width="17" height="15" rx="2.5" stroke="currentColor" stroke-width="1.8"/>
+            <path d="M3.5 9.5h17M8 3.5v3M16 3.5v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+          <span class="nav-lbl">Semana</span>
+        </button>
+        <button class="nav-btn" data-view="progresso" type="button">
+          <svg class="nav-ico" viewBox="0 0 24 24" width="21" height="21" fill="none" aria-hidden="true">
+            <path d="M4 20V10M12 20V4M20 20v-7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          <span class="nav-lbl">Progresso</span>
+        </button>
+        <button class="nav-btn" data-view="financas" type="button">
+          <svg class="nav-ico" viewBox="0 0 24 24" width="21" height="21" fill="none" aria-hidden="true">
+            <rect x="3" y="6" width="18" height="13" rx="3" stroke="currentColor" stroke-width="1.8"/>
+            <path d="M3 10.5h18" stroke="currentColor" stroke-width="1.8"/>
+            <circle cx="16.5" cy="14.5" r="1.4" fill="currentColor"/>
+          </svg>
+          <span class="nav-lbl">Finanças</span>
+        </button>
+      </nav>
+    </div>
 
     <!-- Snackbar (Desfazer) -->
     <div class="snackbar hidden" id="snackbar">
@@ -472,10 +563,90 @@
     <div class="focus-foot" id="focusFoot"></div>
   </div>
 
-  <div class="toast hidden" id="toast"></div>
-  <div class="listening hidden" id="listening">
-    <span class="listening-dot"></span> Estou ouvindo…
+  <!-- ================= MODAL: TRANSAÇÃO (gasto/entrada) ================= -->
+  <div class="modal-overlay hidden" id="txModal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="txModalTitle">
+      <h3 id="txModalTitle">Novo gasto</h3>
+      <label class="field">
+        <span>Descrição</span>
+        <input type="text" id="txText" placeholder="Ex: mercado" autocomplete="off" />
+      </label>
+      <div class="field-row">
+        <label class="field">
+          <span>Valor (R$)</span>
+          <input type="number" id="txAmount" min="0" step="0.01" inputmode="decimal" placeholder="0,00" />
+        </label>
+        <label class="field">
+          <span>Data</span>
+          <input type="date" id="txDate" />
+        </label>
+      </div>
+      <label class="field" id="txCatWrap">
+        <span>Categoria (opcional)</span>
+        <input type="text" id="txCategory" placeholder="Ex: alimentação" autocomplete="off" />
+      </label>
+      <div class="modal-actions">
+        <button class="btn-ghost" id="txCancel" type="button">Cancelar</button>
+        <button class="btn-primary" id="txSave" type="button">Salvar</button>
+      </div>
+    </div>
   </div>
+
+  <!-- ================= MODAL: CONTA ================= -->
+  <div class="modal-overlay hidden" id="billModal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="billModalTitle">
+      <h3 id="billModalTitle">Nova conta</h3>
+      <label class="field">
+        <span>Descrição</span>
+        <input type="text" id="billText" placeholder="Ex: internet" autocomplete="off" />
+      </label>
+      <div class="field-row">
+        <label class="field">
+          <span>Valor (R$)</span>
+          <input type="number" id="billAmount" min="0" step="0.01" inputmode="decimal" placeholder="0,00" />
+        </label>
+        <label class="field">
+          <span>Vencimento</span>
+          <input type="date" id="billDue" />
+        </label>
+      </div>
+      <label class="field">
+        <span>Avisar antes (dias)</span>
+        <input type="number" id="billRemind" min="0" max="30" placeholder="1" />
+      </label>
+      <div class="modal-actions">
+        <button class="btn-ghost" id="billCancel" type="button">Cancelar</button>
+        <button class="btn-primary" id="billSave" type="button">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= MODAL: META FINANCEIRA ================= -->
+  <div class="modal-overlay hidden" id="finGoalModal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="finGoalModalTitle">
+      <h3 id="finGoalModalTitle">Nova meta</h3>
+      <label class="field">
+        <span>Descrição</span>
+        <input type="text" id="finGoalText" placeholder="Ex: guardar para viagem" autocomplete="off" />
+      </label>
+      <div class="field-row">
+        <label class="field">
+          <span>Alvo (R$)</span>
+          <input type="number" id="finGoalTarget" min="0" step="0.01" inputmode="decimal" placeholder="0,00" />
+        </label>
+        <label class="field">
+          <span>Já guardado (R$)</span>
+          <input type="number" id="finGoalCurrent" min="0" step="0.01" inputmode="decimal" placeholder="0,00" />
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-ghost" id="finGoalCancel" type="button">Cancelar</button>
+        <button class="btn-primary" id="finGoalSave" type="button">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast hidden" id="toast"></div>
 
   <script src="./config.js"></script>
   <script src="./phrases.js"></script>
