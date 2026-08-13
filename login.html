@@ -223,9 +223,10 @@
       show('choices');
     })();
 
-    // ---- recuperação de senha via link ----
+    // ---- eventos de auth (recuperação de senha e retorno de OAuth Google/Apple) ----
     A && A.onChange(function(event){
-      if(event === 'PASSWORD_RECOVERY'){ show('recovery'); }
+      if(event === 'PASSWORD_RECOVERY'){ show('recovery'); return; }
+      if(event === 'SIGNED_IN'){ routeAfterAuth(); }
     });
 
     // ---- escolhas ----
