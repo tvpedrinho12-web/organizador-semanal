@@ -65,6 +65,10 @@ export default async function handler(req, res) {
   const today = normDate(body.today) || todayInSaoPaulo();
   const now = normTime(body.now);
   const hojeLabel = WEEKDAYS[new Date(today + 'T12:00:00').getDay()];
+  const upcoming = Array.from({ length: 14 }, (_, i) => {
+    const d = new Date(today + 'T12:00:00'); d.setDate(d.getDate() + i);
+    return `${d.toISOString().slice(0, 10)} ${WEEKDAYS[d.getDay()]}`;
+  }).join(', ');
 
   const system =
 `Você é o assistente de um app pessoal de organização e finanças (em português do Brasil). Interprete a frase do usuário e devolva UMA intenção estruturada. NÃO converse; só classifique e extraia dados.
@@ -74,6 +78,7 @@ Hoje é ${today} (${hojeLabel})${now ? `, agora são ${now}` : ''}. Resolva QUAL
 - "daqui a 3 dias"→+3; "em uma semana"→+7.
 - "dia 15"→o próximo dia 15 (este mês se ainda não passou, senão mês que vem). "dia 10 de setembro"→a próxima 09-10.
 - Se não houver data clara, use ${today} para tarefas simples.
+Calendário dos próximos 14 dias (use SEMPRE esta tabela para acertar o dia da semana, não calcule de cabeça): ${upcoming}.
 Períodos: morning (05:00–11:59), afternoon (12:00–17:59), night (18:00–04:59).
 Valores em dinheiro: devolva "amount" como NÚMERO puro em reais (ex: 42 para "R$ 42", 1200 para "mil e duzentos"), sem símbolo, sem separador de milhar.
 
