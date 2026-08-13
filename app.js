@@ -1,4 +1,4 @@
-/* app.js — Organizador Semanal (redesign IA, 100% local) */
+/* app.js — Ritimo (assistente de organização + finanças, 100% local) */
 (function () {
   'use strict';
 

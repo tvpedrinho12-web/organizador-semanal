@@ -1,6 +1,6 @@
-# Organizador Semanal (PWA)
+# Ritimo (PWA)
 
-App de organização semanal, **100% local**, sem login, sem backend, sem custo. Instalável na tela inicial do iPhone.
+Ritimo — assistente pessoal de organização e finanças por voz e texto, **100% local**, sem login, sem backend, sem custo. Instalável na tela inicial do iPhone.
 
 ## O que faz
 

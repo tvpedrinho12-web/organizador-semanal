@@ -1,7 +1,7 @@
 {
-  "name": "Organizador Semanal",
-  "short_name": "Semana",
-  "description": "Organização semanal simples: metas, checklist do dia, streak e estatísticas. 100% offline.",
+  "name": "Ritimo",
+  "short_name": "Ritimo",
+  "description": "Ritimo — assistente pessoal de organização e finanças por voz e texto. 100% offline.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
