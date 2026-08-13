@@ -99,4 +99,74 @@
       return false;
     }
   };
+
+  // ==========================================================================
+  // Sync na nuvem (Etapa 4): espelha o estado local (IndexedDB) na tabela
+  // user_state por usuário. Intercepta window.DB (definido por db.js) sem
+  // alterar o app.js. Best-effort: se a tabela não existir ou estiver offline,
+  // o app segue 100% local sem quebrar.
+  // ==========================================================================
+  if (window.DB && typeof window.DB.getState === 'function') {
+    var _get = window.DB.getState.bind(window.DB);
+    var _set = window.DB.setState.bind(window.DB);
+    var pushTimer = null;
+
+    function withTimeout(promise, ms) {
+      return Promise.race([
+        promise,
+        new Promise(function (resolve) { setTimeout(function () { resolve({ __timeout: true }); }, ms); })
+      ]);
+    }
+    async function uid() {
+      try { var r = await client.auth.getUser(); return r && r.data && r.data.user ? r.data.user.id : null; }
+      catch (e) { return null; }
+    }
+    async function cloudPull() {
+      var id = await uid();
+      if (!id) return null;
+      var q = await withTimeout(
+        client.from('user_state').select('data,updated_at').eq('user_id', id).single(),
+        2500
+      );
+      if (!q || q.__timeout || q.error || !q.data) return null;
+      return q.data; // { data, updated_at }
+    }
+    async function cloudPush(state) {
+      try {
+        var id = await uid();
+        if (!id) return;
+        await client.from('user_state').upsert({ user_id: id, data: state, updated_at: new Date().toISOString() });
+      } catch (e) { /* tabela ausente / offline: ignora */ }
+    }
+
+    window.DB.getState = async function () {
+      var local = null;
+      try { local = await _get(); } catch (e) {}
+      try {
+        var remote = await cloudPull();
+        if (remote && remote.data) {
+          var rU = remote.data.__updatedAt || remote.updated_at || '';
+          var lU = (local && local.__updatedAt) || '';
+          if (!local || (rU && rU > lU)) {          // nuvem mais recente → adota
+            try { await _set(remote.data); } catch (e) {}
+            return remote.data;
+          }
+          cloudPush(local);                          // local mais recente → sobe
+          return local;
+        }
+        if (local) cloudPush(local);                 // sem linha na nuvem → semeia
+      } catch (e) {}
+      return local;
+    };
+
+    window.DB.setState = async function (state) {
+      try { if (state && typeof state === 'object') state.__updatedAt = new Date().toISOString(); } catch (e) {}
+      var r = await _set(state);
+      clearTimeout(pushTimer);
+      pushTimer = setTimeout(function () { cloudPush(state); }, 900);
+      return r;
+    };
+
+    window.RitmoSync = { pull: cloudPull, push: cloudPush };
+  }
 })();
