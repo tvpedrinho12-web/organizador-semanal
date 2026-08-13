@@ -1,9 +1,10 @@
 /* sw.js — cache offline + ação de notificação "Concluir" + recebimento de push */
-const CACHE = 'ritmo-v10';
+const CACHE = 'ritmo-v11';
 const ASSETS = [
   './',
   './index.html',
   './login.html',
+  './admin.html',
   './styles.css',
   './config.js',
   './supabase.js',

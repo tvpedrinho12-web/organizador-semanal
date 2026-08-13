@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#07060a">
+<title>Ritmo — Administração</title>
+<link rel="icon" type="image/svg+xml" href="./icons/favicon.svg">
+<style>
+  :root{
+    --bg:#0a0a0d; --card:#14141a; --card-2:#17171d; --track:#2a2a32;
+    --text:#f5f5f7; --muted:#8d8d97; --faint:#5c5c66;
+    --accent:#8072f0; --accent-soft:#1b1730;
+    --ok:#38b98d; --warn:#e6b450; --err:#f6768e;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;}
+  body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;-webkit-font-smoothing:antialiased;
+    padding:calc(18px + env(safe-area-inset-top)) 16px calc(28px + env(safe-area-inset-bottom));max-width:720px;margin:0 auto;min-height:100dvh;}
+  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px;}
+  h1{font-size:24px;font-weight:600;margin:0;letter-spacing:-.3px;}
+  .back{font-size:14px;color:var(--accent);text-decoration:none;background:none;border:none;cursor:pointer;font-family:inherit;padding:8px;}
+  .sub{color:var(--muted);font-size:13.5px;margin:-14px 0 22px;}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:10px;margin-bottom:26px;}
+  .stat{background:var(--card);border:1px solid rgba(255,255,255,.05);border-radius:16px;padding:14px 12px;text-align:center;}
+  .stat .n{font-size:26px;font-weight:700;line-height:1;}
+  .stat .l{font-size:11.5px;color:var(--muted);margin-top:6px;text-transform:uppercase;letter-spacing:.4px;}
+  .stat.pending .n{color:var(--warn);} .stat.blocked .n{color:var(--err);} .stat.approved .n{color:var(--ok);}
+
+  .section-title{font-size:13px;color:var(--faint);text-transform:uppercase;letter-spacing:.6px;margin:24px 0 12px;font-weight:600;}
+
+  .user{background:var(--card);border:1px solid rgba(255,255,255,.05);border-radius:16px;padding:14px 15px;margin-bottom:10px;}
+  .user.hl{border-color:rgba(230,180,80,.4);background:linear-gradient(180deg,rgba(230,180,80,.06),var(--card));}
+  .u-top{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+  .u-name{font-size:15.5px;font-weight:600;}
+  .u-email{font-size:13px;color:var(--muted);margin-top:1px;word-break:break-all;}
+  .badge{font-size:11px;font-weight:600;padding:3px 9px;border-radius:20px;white-space:nowrap;}
+  .badge.approved{background:rgba(56,185,141,.15);color:var(--ok);}
+  .badge.pending{background:rgba(230,180,80,.15);color:var(--warn);}
+  .badge.blocked{background:rgba(246,118,142,.15);color:var(--err);}
+  .badge.admin{background:var(--accent-soft);color:var(--accent);margin-left:6px;}
+  .u-meta{display:flex;flex-wrap:wrap;gap:12px;margin-top:10px;font-size:12px;color:var(--faint);}
+  .u-meta b{color:var(--muted);font-weight:600;}
+  .u-actions{display:flex;gap:8px;margin-top:12px;}
+  .act{flex:1;height:38px;border-radius:10px;border:none;font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;transition:opacity .15s,transform .1s;}
+  .act:active{transform:scale(.98);} .act:disabled{opacity:.5;cursor:default;}
+  .act.approve{background:var(--ok);color:#08150f;}
+  .act.block{background:rgba(246,118,142,.15);color:var(--err);}
+  .act.reset{background:var(--track);color:var(--text);}
+
+  .msg{text-align:center;color:var(--muted);font-size:14px;padding:26px 0;}
+  .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--card-2);border:1px solid rgba(255,255,255,.08);color:var(--text);padding:11px 18px;border-radius:12px;font-size:14px;box-shadow:0 8px 30px rgba(0,0,0,.4);opacity:0;transition:opacity .2s;pointer-events:none;z-index:50;}
+  .toast.on{opacity:1;}
+</style>
+</head>
+<body>
+  <header>
+    <h1>Administração</h1>
+    <button class="back" id="back">← Voltar ao app</button>
+  </header>
+  <div class="sub" id="whoami"></div>
+
+  <div class="grid" id="overview"></div>
+
+  <div id="pending-wrap" hidden>
+    <div class="section-title">Pedidos de acesso</div>
+    <div id="pending-list"></div>
+  </div>
+
+  <div class="section-title">Todos os usuários</div>
+  <div id="users">
+    <div class="msg" id="users-msg">Carregando...</div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="./config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="./supabase.js"></script>
+  <script>
+  (function(){
+    var A = window.RitmoAuth;
+    var sb = window.sb;
+    function $(id){ return document.getElementById(id); }
+    var me = null;
+
+    function toast(t){ var el=$('toast'); el.textContent=t; el.classList.add('on'); clearTimeout(el._t); el._t=setTimeout(function(){el.classList.remove('on');},2200); }
+    function fmtDate(s){ if(!s) return '—'; try{ return new Date(s).toLocaleDateString('pt-BR',{day:'2-digit',month:'short'}); }catch(e){ return '—'; } }
+
+    $('back').addEventListener('click', function(){ location.href = 'index.html'; });
+
+    (async function init(){
+      if(!A){ $('users-msg').textContent = 'Erro ao carregar o Supabase.'; return; }
+      var s = await A.getSession();
+      var session = s && s.data ? s.data.session : null;
+      if(!session){ location.replace('login.html'); return; }
+      me = await A.profile();
+      if(!me || me.role !== 'admin'){ location.replace('index.html'); return; }
+      $('whoami').textContent = 'Conectado como ' + (me.name || me.email) + ' · admin';
+      await load();
+    })();
+
+    async function load(){
+      try{
+        var ov = await sb.rpc('admin_overview');
+        if(ov.error) throw ov.error;
+        renderOverview(ov.data);
+      }catch(e){ $('overview').innerHTML = ''; }
+
+      try{
+        var us = await sb.rpc('admin_user_summaries');
+        if(us.error) throw us.error;
+        renderUsers(us.data || []);
+      }catch(e){ $('users-msg').textContent = 'Não foi possível carregar os usuários.'; }
+    }
+
+    function renderOverview(o){
+      o = o || {};
+      var cells = [
+        ['total', o.total_users, ''],
+        ['approved', o.approved, 'approved'],
+        ['pending', o.pending, 'pending'],
+        ['blocked', o.blocked, 'blocked'],
+        ['IA (chamadas)', o.ai_calls_total, '']
+      ];
+      $('overview').innerHTML = cells.map(function(c){
+        return '<div class="stat '+c[2]+'"><div class="n">'+(c[1]!=null?c[1]:'—')+'</div><div class="l">'+c[0]+'</div></div>';
+      }).join('');
+    }
+
+    function esc(t){ return (t==null?'':String(t)).replace(/[&<>"]/g,function(m){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m];}); }
+
+    function userCard(u, highlight){
+      var isMe = u.id === me.id;
+      var actions = '';
+      if(!isMe){
+        if(u.status === 'pending'){
+          actions = '<button class="act approve" data-id="'+u.id+'" data-to="approved">Aprovar</button>'+
+                    '<button class="act block" data-id="'+u.id+'" data-to="blocked">Recusar</button>';
+        } else if(u.status === 'approved'){
+          actions = '<button class="act block" data-id="'+u.id+'" data-to="blocked">Bloquear</button>';
+        } else if(u.status === 'blocked'){
+          actions = '<button class="act approve" data-id="'+u.id+'" data-to="approved">Aprovar</button>'+
+                    '<button class="act reset" data-id="'+u.id+'" data-to="pending">Deixar pendente</button>';
+        }
+      }
+      return '<div class="user'+(highlight?' hl':'')+'">'+
+        '<div class="u-top"><div><div class="u-name">'+esc(u.name||'—')+
+          (u.role==='admin'?'<span class="badge admin">admin</span>':'')+
+          '</div><div class="u-email">'+esc(u.email)+'</div></div>'+
+          '<span class="badge '+u.status+'">'+u.status+'</span></div>'+
+        '<div class="u-meta"><span><b>'+ (u.task_count||0) +'</b> tarefas</span>'+
+          '<span><b>'+ (u.tx_count||0) +'</b> finanças</span>'+
+          '<span><b>'+ (u.ai_calls||0) +'</b> IA</span>'+
+          '<span>cadastro '+fmtDate(u.created_at)+'</span>'+
+          '<span>visto '+fmtDate(u.last_seen_at)+'</span></div>'+
+        (actions?'<div class="u-actions">'+actions+'</div>':'')+
+      '</div>';
+    }
+
+    function renderUsers(list){
+      var pending = list.filter(function(u){return u.status==='pending';});
+      if(pending.length){
+        $('pending-wrap').hidden = false;
+        $('pending-list').innerHTML = pending.map(function(u){return userCard(u,true);}).join('');
+      } else { $('pending-wrap').hidden = true; }
+
+      if(!list.length){ $('users').innerHTML = '<div class="msg">Nenhum usuário ainda.</div>'; return; }
+      $('users').innerHTML = list.map(function(u){return userCard(u,false);}).join('');
+
+      Array.prototype.forEach.call(document.querySelectorAll('.act'), function(btn){
+        btn.addEventListener('click', function(){ setStatus(btn.getAttribute('data-id'), btn.getAttribute('data-to'), btn); });
+      });
+    }
+
+    async function setStatus(id, to, btn){
+      var labels = {approved:'aprovado', blocked:'bloqueado', pending:'pendente'};
+      Array.prototype.forEach.call(document.querySelectorAll('.act'), function(b){ b.disabled = true; });
+      try{
+        var r = await sb.rpc('admin_set_status', { target: id, new_status: to });
+        if(r.error) throw r.error;
+        toast('Usuário ' + (labels[to]||to));
+        await load();
+      }catch(e){
+        toast('Erro: ' + (e.message||'não foi possível'));
+        Array.prototype.forEach.call(document.querySelectorAll('.act'), function(b){ b.disabled = false; });
+      }
+    }
+  })();
+  </script>
+</body>
+</html>

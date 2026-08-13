@@ -30,7 +30,16 @@
     document.addEventListener('DOMContentLoaded', function () {
       function reveal(){ var g = document.getElementById('ritmo-gate'); if (g) g.remove(); }
       if (!window.RitmoGuard) { reveal(); return; }        // offline / lib indisponível: não trava o app
-      window.RitmoGuard().then(function (p) { if (p) reveal(); });
+      window.RitmoGuard().then(function (p) {
+        if (p) reveal();
+        if (p && p.role === 'admin' && !document.getElementById('admin-chip')) {
+          var a = document.createElement('a');
+          a.id = 'admin-chip'; a.href = 'admin.html'; a.textContent = 'Admin';
+          a.setAttribute('aria-label', 'Painel de administração');
+          a.style.cssText = 'position:fixed;top:calc(6px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);z-index:9999;background:rgba(128,114,240,.16);color:#8072f0;border:1px solid rgba(128,114,240,.4);border-radius:20px;padding:4px 13px;font:600 12px -apple-system,BlinkMacSystemFont,sans-serif;text-decoration:none;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);';
+          document.body.appendChild(a);
+        }
+      });
     });
   </script>
 </head>
